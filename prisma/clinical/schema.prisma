@@ -1,0 +1,132 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
+  output          = "../../generated/clinical-client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("CLINICAL_DATABASE_URL")
+  schemas  = ["clinical_schema"]
+}
+
+enum GenderEnum {
+  MALE
+  FEMALE
+  OTHER
+
+  @@map("gender_enum")
+  @@schema("clinical_schema")
+}
+
+model Vitals {
+  recordId    String     @id @default(uuid()) @map("record_id") @db.Uuid
+  linkToken   String?    @map("link_token")
+  age         Int
+  gender      GenderEnum
+  height      Float?
+  weight      Float?
+  bp          String?
+  temperature Float?
+  bloodGroup  String?    @map("blood_group")
+
+  @@map("vitals")
+  @@schema("clinical_schema")
+}
+
+model Scan {
+  scanId        String    @id @default(uuid()) @map("scan_id") @db.Uuid
+  linkToken     String    @map("link_token")
+  scanType      String    @map("scan_type")
+  fileName      String    @map("file_name")
+  filePath      String    @map("file_path")
+  thumbnailPath String?   @map("thumbnail_path")
+  fileSize      Int?      @map("file_size")
+  mimeType      String?   @map("mime_type")
+  ocrText       String?   @map("ocr_text")
+  ocrConfidence Float?    @map("ocr_confidence")
+  status        String    @default("UPLOADED")
+  metadata      Json?
+  uploadedAt    DateTime? @default(now()) @map("uploaded_at")
+  processedAt   DateTime? @map("processed_at")
+
+  @@map("scans")
+  @@schema("clinical_schema")
+}
+
+model AuditLog {
+  logId        String    @id @default(uuid()) @map("log_id") @db.Uuid
+  linkToken    String    @map("link_token")
+  action       String
+  scanId       String?   @map("scan_id") @db.Uuid
+  status       String
+  errorMessage String?   @map("error_message")
+  ipAddress    String?   @map("ip_address")
+  userAgent    String?   @map("user_agent")
+  timestamp    DateTime? @default(now())
+
+  @@map("audit_logs")
+  @@schema("clinical_schema")
+}
+
+model PatientProfile {
+  profileId         String   @id @default(uuid()) @map("profile_id") @db.Uuid
+  linkToken         String   @unique @map("link_token")
+  profilePicUrl     String?  @map("profile_pic_url")
+  preferredLanguage String?  @default("en") @map("preferred_language")
+  createdAt         DateTime? @default(now()) @map("created_at")
+  updatedAt         DateTime? @default(now()) @map("updated_at")
+
+  @@map("patient_profiles")
+  @@schema("clinical_schema")
+}
+
+model Doctor {
+  doctorId       String   @id @default(uuid()) @map("doctor_id") @db.Uuid
+  doctorToken    String   @unique @map("doctor_token")
+  specialization String?
+  qualification  String?
+  experience     Int?
+  isApproved     Boolean  @default(false) @map("is_approved")
+  createdAt      DateTime? @default(now()) @map("created_at")
+  updatedAt      DateTime? @default(now()) @map("updated_at")
+
+  @@map("doctors")
+  @@schema("clinical_schema")
+}
+
+// BE-3 — medicine reference catalog for the recommender.
+// Not linked to any patient (linkToken) — this is shared reference
+// data, same for every user, not clinical data about a specific person.
+model Medicine {
+  id               Int      @id @default(autoincrement())
+  name             String
+  composition      String?
+  uses             String?
+  sideEffects      String?  @map("side_effects")
+  imageUrl         String?  @map("image_url")
+  manufacturer     String?
+  excellentReview  Decimal? @map("excellent_review")
+  averageReview    Decimal? @map("average_review")
+  poorReview       Decimal? @map("poor_review")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@map("medicines")
+  @@schema("clinical_schema")
+}
+
+model Consultation {
+  consultationId String   @id @default(uuid()) @map("consultation_id") @db.Uuid
+  doctorToken    String   @map("doctor_token")
+  linkToken      String   @map("link_token")
+  status         String   @default("ACTIVE")
+  notes          String?
+  createdAt      DateTime? @default(now()) @map("created_at")
+  updatedAt      DateTime? @default(now()) @map("updated_at")
+
+  @@index([doctorToken])
+  @@index([linkToken])
+  @@map("consultations")
+  @@schema("clinical_schema")
+}
+
