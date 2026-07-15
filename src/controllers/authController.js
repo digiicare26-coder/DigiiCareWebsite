@@ -141,6 +141,7 @@ async function requestOtp(req, res) {
  * payload MUST contain linkToken, since that's the only thing every
  * other protected route (e.g. BE-4's upload routes) reads off req.user.
  */
+// src/controllers/authController.js
 async function verifyOtp(req, res) {
   try {
     const { identifier, otp } = req.body;
@@ -158,17 +159,20 @@ async function verifyOtp(req, res) {
     await otpService.verifyOtp(patient.patientId, String(otp).trim());
 
     if (!patient.linkToken) {
-      // Shouldn't happen in practice — every patient gets a link_token
-      // at signup — but fail loudly rather than issuing a token
-      // that downstream services can't use.
       return res.status(500).json({ success: false, error: 'Account is missing a link token. Contact support.' });
     }
+
+    // 🔥 ADD THIS LOG
+    console.log('Signing token with secret:', process.env.JWT_SECRET ? 'Set' : 'NOT SET');
+    console.log('linkToken:', patient.linkToken.linkToken);
 
     const token = jwt.sign(
       { linkToken: patient.linkToken.linkToken, patientId: patient.patientId },
       process.env.JWT_SECRET,
       { expiresIn: JWT_EXPIRES_IN }
     );
+
+    console.log('Token generated:', token.substring(0, 20) + '...'); // 🔥 ADD THIS
 
     return res.status(200).json({
       success: true,
