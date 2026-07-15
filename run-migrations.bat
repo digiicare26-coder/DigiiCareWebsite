@@ -35,6 +35,9 @@ psql -U postgres -d healthcare_db -f database/migrations/008_merge_sub_accounts_
 echo [10/10] Running 009...
 psql -U postgres -d healthcare_db -f database/migrations/009_add_doctor_auth_and_logout.sql
 
+echo [11/11] Running 010...
+psql -U postgres -d healthcare_db -f database/migrations/010_add_consent_log.sql
+
 echo.
 echo  ALL DONE!
 pause
