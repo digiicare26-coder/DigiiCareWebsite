@@ -4,7 +4,7 @@ const clinicalRepository = require('../repositories/clinicalRepository');
 // Yeh version disclaimer text ke sath match hona chahiye jo UI dikhati hai.
 // Jab bhi disclaimer ka text badle, yahan version bhi badal dein
 // (jaise "v1.0" -> "v2.0") — purane consents automatically "outdated" ho jayenge.
-const CURRENT_CONSENT_VERSION = 'v1.0';
+const { CURRENT_CONSENT_VERSION } = require('../config/consentConfig');
 
 async function createConsent(req, res) {
   try {
