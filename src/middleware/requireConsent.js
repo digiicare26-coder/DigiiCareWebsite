@@ -15,7 +15,10 @@ const { CURRENT_CONSENT_VERSION } = require('../config/consentConfig');
 
 async function requireConsent(req, res, next) {
   try {
-    const { linkToken } = req.user;
+    const linkToken = req.user?.linkToken;
+    if (!linkToken) {
+      return res.status(401).json({ success: false, error: 'Unauthorized.' });
+    }
 
     const latest = await clinicalRepository.getLatestConsent(linkToken);
 
