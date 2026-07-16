@@ -17,6 +17,7 @@ const recommendRoute = require('./src/routes/recommendRoute');
 const subAccountRoute = require('./src/routes/subAccountRoute');
 const consultationRoute = require('./src/routes/consultationRoute');
 const searchRoute = require('./src/routes/searchRoute');  // 🔥 ADD THIS
+const consentRoute = require('./src/routes/consentRoute');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -39,6 +40,7 @@ app.use('/api/doctor-auth', doctorAuthRoute);       // Doctor auth
 app.use('/api/profile', patientProfileRoute);       // Patient profile
 app.use('/api/doctor', doctorRoute);               // Doctor clinical
 app.use('/api/consultations', consultationRoute);   // Consultations
+app.use('/api/consent', consentRoute);             // Consent logging
 app.use('/api/storage', storageRoute);             // File storage
 app.use('/api/recommend', recommendRoute);         // Medicine recommender
 app.use('/api/search', searchRoute);               // 🔥 Search OCR scans

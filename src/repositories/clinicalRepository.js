@@ -265,6 +265,26 @@ async function createConsultation(linkToken, doctorToken) {
   });
 }
 
+async function createConsentLog(linkToken, consentGiven, consentVersion) {
+  return clinicalPrisma.consentLog.create({
+    data: { linkToken, consentGiven, consentVersion },
+  });
+}
+
+async function getLatestConsent(linkToken) {
+  return clinicalPrisma.consentLog.findFirst({
+    where: { linkToken },
+    orderBy: { createdAt: 'desc' },
+  });
+}
+
+async function getConsentHistory(linkToken) {
+  return clinicalPrisma.consentLog.findMany({
+    where: { linkToken },
+    orderBy: { createdAt: 'desc' },
+  });
+}
+
 // ============================================================
 // MODULE EXPORTS
 // ============================================================
@@ -288,4 +308,7 @@ module.exports = {
   approveDoctor,
   getConsultationsByDoctorToken,
   createConsultation,
+  createConsentLog,
+  getLatestConsent,
+  getConsentHistory,
 };
