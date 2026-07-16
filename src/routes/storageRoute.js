@@ -10,9 +10,11 @@ const {
   deleteScan     // 🔥 ADD
 } = require('../controllers/uploadController');
 const authMiddleware = require('../middleware/auth');
+const deidentifyMiddleware = require('../middleware/deidentify');
 
 // 🔥 All routes protected
 router.use(authMiddleware);
+router.use(deidentifyMiddleware);
 
 // Upload routes
 router.post('/prescription', upload.single('file'), uploadPrescription);
