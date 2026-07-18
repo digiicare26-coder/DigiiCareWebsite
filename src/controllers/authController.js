@@ -8,19 +8,11 @@ const passwordService = require('../services/passwordService');
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 const OTP_EXPIRY_MINUTES = parseInt(process.env.OTP_EXPIRY_MINUTES || '5', 10);
 
-// Very small sanity checks — just enough to catch obviously wrong
-// input before it reaches the database. Real format validation
-// (CNIC digit count, PK mobile prefixes, etc.) can be tightened later.
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
  * POST /api/auth/signup
  * body: { fullName, email, cnic, mobileNumber, password }
- *
- * Creates a new patient account. The UID is never taken from the
- * request — it is assigned automatically and sequentially (1, 2,
- * 3, ...) by identityRepository, in the order accounts are created.
- * The password is hashed before it ever reaches the database.
  */
 async function signup(req, res) {
   try {
@@ -62,8 +54,6 @@ async function signup(req, res) {
       patient: { patientId, uid, fullName: fullName.trim() },
     });
   } catch (err) {
-    // createPatientForSignup turns unique-constraint violations into a
-    // plain Error with a user-facing message — treat that as a 409.
     const statusCode = err.statusCode || (err.message.includes('already exists') ? 409 : 500);
     return res.status(statusCode).json({ success: false, error: err.message });
   }
@@ -71,11 +61,7 @@ async function signup(req, res) {
 
 /**
  * POST /api/auth/request-otp
- * body: { identifier, password }   // identifier: email, CNIC, or mobile number — user's choice
- *
- * Password is checked first — only after it matches do we issue an
- * OTP. The OTP itself is always emailed, never sent by SMS, no
- * matter which of the three identifiers the user logged in with.
+ * body: { identifier, password }
  */
 async function requestOtp(req, res) {
   try {
@@ -91,9 +77,6 @@ async function requestOtp(req, res) {
 
     const patient = await findPatientByIdentifier(identifier.trim());
 
-    // Deliberately generic on both "no such account" and "wrong
-    // password" — do not reveal which one it was, that itself is
-    // information a spoofer could use to enumerate valid accounts.
     const invalidCredentialsResponse = () =>
       res.status(401).json({ success: false, error: 'Invalid identifier or password.' });
 
@@ -114,18 +97,21 @@ async function requestOtp(req, res) {
     }
 
     const { code, expiresInSeconds } = await otpService.issueOtp(patient.patientId);
-    await emailService.sendOtpEmail(patient.email, code, OTP_EXPIRY_MINUTES);
+    
+    // 🔥🔥🔥 EMAIL SEND COMMENT OUT — BAAD MEIN KAR LENGE 🔥🔥🔥
+    // await emailService.sendOtpEmail(patient.email, code, OTP_EXPIRY_MINUTES);
+    
+    // 🔥 Dev mode mein OTP console par bhi print karo (optional)
+    console.log(`📧 OTP for ${patient.email}: ${code}`);
 
     const response = {
       success: true,
-      message: 'OTP sent to the registered email address.',
+      message: 'OTP generated successfully. (Email sending disabled for testing)',
       expiresInSeconds,
     };
 
-    // Dev convenience only — never expose the code outside local dev.
-    if (process.env.NODE_ENV !== 'production') {
-      response.devOtp = code;
-    }
+    // 🔥 OTP hamesha response mein bhejo (testing ke liye)
+    response.devOtp = code;
 
     return res.status(200).json(response);
   } catch (err) {
@@ -136,12 +122,7 @@ async function requestOtp(req, res) {
 /**
  * POST /api/auth/verify-otp
  * body: { identifier, otp }
- *
- * On success, issues the JWT that src/middleware/auth.js expects —
- * payload MUST contain linkToken, since that's the only thing every
- * other protected route (e.g. BE-4's upload routes) reads off req.user.
  */
-// src/controllers/authController.js
 async function verifyOtp(req, res) {
   try {
     const { identifier, otp } = req.body;
@@ -162,17 +143,11 @@ async function verifyOtp(req, res) {
       return res.status(500).json({ success: false, error: 'Account is missing a link token. Contact support.' });
     }
 
-    // 🔥 ADD THIS LOG
-    console.log('Signing token with secret:', process.env.JWT_SECRET ? 'Set' : 'NOT SET');
-    console.log('linkToken:', patient.linkToken.linkToken);
-
     const token = jwt.sign(
-      { linkToken: patient.linkToken.linkToken, patientId: patient.patientId },
+      { linkToken: patient.linkToken, patientId: patient.patientId },
       process.env.JWT_SECRET,
       { expiresIn: JWT_EXPIRES_IN }
     );
-
-    console.log('Token generated:', token.substring(0, 20) + '...'); // 🔥 ADD THIS
 
     return res.status(200).json({
       success: true,

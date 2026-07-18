@@ -33,13 +33,8 @@ async function getVitalsByToken(linkToken) {
   });
 }
 
-// NOTE: saveReport()/getReportsByToken() removed — there is no
-// clinical_schema.reports table in create_scans_tables.sql or
-// create_vitals_table.sql. If a reports table exists elsewhere,
-// tell me and I'll add its model + these functions back.
-
 // ============================================================
-// BE-4 FUNCTIONS
+// BE-4 FUNCTIONS (Original)
 // ============================================================
 
 async function saveScan(linkToken, scanData) {
@@ -57,6 +52,8 @@ async function saveScan(linkToken, scanData) {
         mimeType,
         status: 'UPLOADED',
         metadata: metadata || {},
+        version: 1,
+        isLatest: true,
       },
     });
 
@@ -72,13 +69,21 @@ async function getScansByToken(linkToken, page = 1, limit = 10) {
 
   const [scans, total] = await Promise.all([
     clinicalPrisma.scan.findMany({
-      where: { linkToken, status: { not: 'DELETED' } },
+      where: { 
+        linkToken, 
+        status: { not: 'DELETED' },
+        isLatest: true,
+      },
       orderBy: { uploadedAt: 'desc' },
       skip,
       take: limit,
     }),
     clinicalPrisma.scan.count({
-      where: { linkToken, status: { not: 'DELETED' } },
+      where: { 
+        linkToken, 
+        status: { not: 'DELETED' },
+        isLatest: true,
+      },
     }),
   ]);
 
@@ -112,7 +117,7 @@ async function updateScanStatus(scanId, status, ocrText = null, confidence = nul
     });
     return result?.scanId;
   } catch (err) {
-    if (err.code === 'P2025') return undefined; // record not found
+    if (err.code === 'P2025') return undefined;
     throw err;
   }
 }
@@ -145,6 +150,204 @@ async function logAudit(auditData) {
   } catch (err) {
     console.error('Audit log failed:', err.message);
     return null;
+  }
+}
+
+// ============================================================
+// 🆕 BE-4: SEARCH SCANS BY OCR TEXT
+// ============================================================
+
+async function searchScansByText(linkToken, searchTerm) {
+  try {
+    const scans = await clinicalPrisma.scan.findMany({
+      where: {
+        linkToken: linkToken,
+        OR: [
+          { ocrText: { contains: searchTerm, mode: 'insensitive' } },
+          { fileName: { contains: searchTerm, mode: 'insensitive' } }
+        ],
+        status: { not: 'DELETED' }
+      },
+      orderBy: { uploadedAt: 'desc' }
+    });
+    
+    return scans;
+  } catch (err) {
+    console.error('Search scans error:', err);
+    throw err;
+  }
+}
+
+// ============================================================
+// 🆕 BE-4: REPORT HISTORY / VERSIONING FUNCTIONS
+// ============================================================
+
+async function createNewVersion(originalScanId, scanData) {
+  try {
+    const currentScan = await clinicalPrisma.scan.findUnique({
+      where: { scanId: originalScanId }
+    });
+
+    if (!currentScan) {
+      throw new Error('Original scan not found');
+    }
+
+    const parentScanId = currentScan.parentScanId || currentScan.scanId;
+
+    const latestVersion = await clinicalPrisma.scan.findFirst({
+      where: {
+        OR: [
+          { scanId: parentScanId },
+          { parentScanId: parentScanId }
+        ]
+      },
+      orderBy: { version: 'desc' }
+    });
+
+    const newVersionNumber = (latestVersion?.version || 0) + 1;
+
+    await clinicalPrisma.scan.updateMany({
+      where: {
+        OR: [
+          { scanId: parentScanId },
+          { parentScanId: parentScanId }
+        ]
+      },
+      data: {
+        isLatest: false
+      }
+    });
+
+    const { scanType, fileName, filePath, thumbnailPath, fileSize, mimeType, metadata } = scanData;
+
+    const newScan = await clinicalPrisma.scan.create({
+      data: {
+        linkToken: currentScan.linkToken,
+        scanType: scanType || currentScan.scanType,
+        fileName: fileName,
+        filePath: filePath,
+        thumbnailPath: thumbnailPath || null,
+        fileSize: fileSize,
+        mimeType: mimeType,
+        status: 'UPLOADED',
+        metadata: metadata || {},
+        version: newVersionNumber,
+        parentScanId: parentScanId,
+        isLatest: true
+      }
+    });
+
+    return newScan;
+
+  } catch (error) {
+    console.error('Create New Version Error:', error);
+    throw error;
+  }
+}
+
+async function getScanHistory(scanId) {
+  try {
+    const originalScan = await clinicalPrisma.scan.findUnique({
+      where: { scanId: scanId }
+    });
+
+    if (!originalScan) {
+      return null;
+    }
+
+    const rootId = originalScan.parentScanId || originalScan.scanId;
+
+    const versions = await clinicalPrisma.scan.findMany({
+      where: {
+        OR: [
+          { scanId: rootId },
+          { parentScanId: rootId }
+        ],
+        status: { not: 'DELETED' }
+      },
+      orderBy: {
+        version: 'asc'
+      }
+    });
+
+    return {
+      rootId: rootId,
+      totalVersions: versions.length,
+      versions: versions
+    };
+
+  } catch (error) {
+    console.error('Get Scan History Error:', error);
+    throw error;
+  }
+}
+
+async function getLatestVersion(scanId) {
+  try {
+    const originalScan = await clinicalPrisma.scan.findUnique({
+      where: { scanId: scanId }
+    });
+
+    if (!originalScan) {
+      return null;
+    }
+
+    const rootId = originalScan.parentScanId || originalScan.scanId;
+
+    const latest = await clinicalPrisma.scan.findFirst({
+      where: {
+        OR: [
+          { scanId: rootId },
+          { parentScanId: rootId }
+        ],
+        isLatest: true,
+        status: { not: 'DELETED' }
+      }
+    });
+
+    return latest;
+
+  } catch (error) {
+    console.error('Get Latest Version Error:', error);
+    throw error;
+  }
+}
+
+async function getScansByLinkToken(linkToken) {
+  try {
+    const scans = await clinicalPrisma.scan.findMany({
+      where: {
+        linkToken: linkToken,
+        isLatest: true,
+        status: { not: 'DELETED' }
+      },
+      orderBy: {
+        uploadedAt: 'desc'
+      }
+    });
+    return scans;
+  } catch (error) {
+    console.error('Get Scans By LinkToken Error:', error);
+    throw error;
+  }
+}
+
+async function getScanByVersion(rootId, version) {
+  try {
+    const scan = await clinicalPrisma.scan.findFirst({
+      where: {
+        OR: [
+          { scanId: rootId },
+          { parentScanId: rootId }
+        ],
+        version: version,
+        status: { not: 'DELETED' }
+      }
+    });
+    return scan;
+  } catch (error) {
+    console.error('Get Scan By Version Error:', error);
+    throw error;
   }
 }
 
@@ -183,7 +386,7 @@ async function updatePatientProfile(linkToken, profileData) {
     });
     return result.profileId;
   } catch (err) {
-    if (err.code === 'P2025') return undefined; // record not found
+    if (err.code === 'P2025') return undefined;
     throw err;
   }
 }
@@ -193,7 +396,7 @@ async function deletePatientProfile(linkToken) {
     await clinicalPrisma.patientProfile.delete({ where: { linkToken } });
     return true;
   } catch (err) {
-    if (err.code === 'P2025') return false; // record not found
+    if (err.code === 'P2025') return false;
     throw err;
   }
 }
@@ -231,14 +434,11 @@ async function updateDoctor(doctorToken, doctorData) {
     });
     return result.doctorId;
   } catch (err) {
-    if (err.code === 'P2025') return undefined; // record not found
+    if (err.code === 'P2025') return undefined;
     throw err;
   }
 }
 
-// 🔥 ADDED: doctors.is_approved existed in the schema/migration but no
-// function ever set it — an admin had no way to approve a doctor
-// through the API. This closes that gap without touching anything else.
 async function approveDoctor(doctorToken) {
   try {
     const result = await clinicalPrisma.doctor.update({
@@ -247,7 +447,7 @@ async function approveDoctor(doctorToken) {
     });
     return result.doctorId;
   } catch (err) {
-    if (err.code === 'P2025') return undefined; // record not found
+    if (err.code === 'P2025') return undefined;
     throw err;
   }
 }
@@ -286,18 +486,224 @@ async function getConsentHistory(linkToken) {
 }
 
 // ============================================================
+// BE-2: REWARDS FUNCTIONS
+// ============================================================
+
+async function earnPoints(linkToken, points, reason, actionKey) {
+  try {
+    return await clinicalPrisma.$transaction(async (tx) => {
+      const account = await tx.rewardAccount.upsert({
+        where: { linkToken },
+        create: { linkToken, pointsBalance: points },
+        update: { pointsBalance: { increment: points } },
+      });
+      const transaction = await tx.rewardTransaction.create({
+        data: { linkToken, points, type: 'EARNED', reason, actionKey },
+      });
+      return { account, transaction };
+    });
+  } catch (err) {
+    if (err.code === 'P2002') return null;
+    throw err;
+  }
+}
+
+async function redeemPoints(linkToken, points, reason, actionKey) {
+  try {
+    return await clinicalPrisma.$transaction(async (tx) => {
+      const account = await tx.rewardAccount.findUnique({ where: { linkToken } });
+
+      if (!account || account.pointsBalance < points) {
+        throw new Error('INSUFFICIENT_BALANCE');
+      }
+
+      const updatedAccount = await tx.rewardAccount.update({
+        where: { linkToken },
+        data: { pointsBalance: { decrement: points } },
+      });
+      const transaction = await tx.rewardTransaction.create({
+        data: { linkToken, points: -points, type: 'REDEEMED', reason, actionKey },
+      });
+      return { account: updatedAccount, transaction };
+    });
+  } catch (err) {
+    if (err.code === 'P2002') return null;
+    throw err;
+  }
+}
+
+async function getRewardBalance(linkToken) {
+  const account = await clinicalPrisma.rewardAccount.findUnique({ where: { linkToken } });
+  return account ? account.pointsBalance : 0;
+}
+
+async function getRewardHistory(linkToken) {
+  return clinicalPrisma.rewardTransaction.findMany({
+    where: { linkToken },
+    orderBy: { createdAt: 'desc' },
+  });
+}
+
+async function createRedemptionRequest(linkToken, pointsRequested, reason) {
+  return clinicalPrisma.$transaction(async (tx) => {
+    const account = await tx.rewardAccount.findUnique({ where: { linkToken } });
+
+    if (!account || account.pointsBalance < pointsRequested) {
+      throw new Error('INSUFFICIENT_BALANCE');
+    }
+
+    await tx.rewardAccount.update({
+      where: { linkToken },
+      data: { pointsBalance: { decrement: pointsRequested } },
+    });
+
+    const request = await tx.redemptionRequest.create({
+      data: { linkToken, pointsRequested, reason: reason || null, status: 'PENDING' },
+    });
+
+    await tx.rewardTransaction.create({
+      data: {
+        linkToken,
+        points: -pointsRequested,
+        type: 'REDEEMED',
+        reason: reason || 'redemption_request',
+        actionKey: `${linkToken}_redemption_${request.redemptionId}`,
+      },
+    });
+
+    return request;
+  });
+}
+
+async function getRedemptionRequestById(redemptionId) {
+  return clinicalPrisma.redemptionRequest.findUnique({ where: { redemptionId } });
+}
+
+async function getRedemptionRequestsByToken(linkToken) {
+  return clinicalPrisma.redemptionRequest.findMany({
+    where: { linkToken },
+    orderBy: { requestedAt: 'desc' },
+  });
+}
+
+async function approveRedemption(redemptionId) {
+  return clinicalPrisma.redemptionRequest.updateMany({
+    where: { redemptionId, status: 'PENDING' },
+    data: { status: 'APPROVED', reviewedAt: new Date() },
+  });
+}
+
+async function rejectRedemption(redemptionId) {
+  return clinicalPrisma.$transaction(async (tx) => {
+    const request = await tx.redemptionRequest.findFirst({
+      where: { redemptionId, status: 'PENDING' },
+    });
+
+    if (!request) return null;
+
+    const updated = await tx.redemptionRequest.update({
+      where: { redemptionId },
+      data: { status: 'REJECTED', reviewedAt: new Date() },
+    });
+
+    await tx.rewardAccount.update({
+      where: { linkToken: request.linkToken },
+      data: { pointsBalance: { increment: request.pointsRequested } },
+    });
+
+    await tx.rewardTransaction.create({
+      data: {
+        linkToken: request.linkToken,
+        points: request.pointsRequested,
+        type: 'EARNED',
+        reason: 'redemption_rejected_refund',
+        actionKey: `${request.linkToken}_refund_${redemptionId}`,
+      },
+    });
+
+    return updated;
+  });
+}
+
+// ============================================================
+// 🆕 BE-4: PRINT FUNCTIONS
+// ============================================================
+
+async function updateScanPrintInfo(scanId, pdfPath) {
+  try {
+    const result = await clinicalPrisma.scan.update({
+      where: { scanId },
+      data: {
+        printedPdfPath: pdfPath,
+        printedAt: new Date()
+      }
+    });
+    return result;
+  } catch (error) {
+    console.error('Update Scan Print Info Error:', error);
+    throw error;
+  }
+}
+
+async function createPrintJob(scanId, pdfPath) {
+  try {
+    const result = await clinicalPrisma.printJob.create({
+      data: {
+        scanId: scanId,
+        pdfPath: pdfPath
+      }
+    });
+    return result;
+  } catch (error) {
+    console.error('Create Print Job Error:', error);
+    throw error;
+  }
+}
+
+async function getPrintJobsByScanId(scanId) {
+  try {
+    const printJobs = await clinicalPrisma.printJob.findMany({
+      where: { scanId: scanId },
+      orderBy: { createdAt: 'desc' }
+    });
+    return printJobs;
+  } catch (error) {
+    console.error('Get Print Jobs Error:', error);
+    return [];
+  }
+}
+
+// ============================================================
 // MODULE EXPORTS
 // ============================================================
 
 module.exports = {
+  // BE-1
   saveVitals,
   getVitalsByToken,
+
+  // BE-4 - Original
   saveScan,
   getScansByToken,
   getScanById,
   updateScanStatus,
   deleteScan,
   logAudit,
+  searchScansByText,
+
+  // BE-4 - Versioning
+  createNewVersion,
+  getScanHistory,
+  getLatestVersion,
+  getScansByLinkToken,
+  getScanByVersion,
+
+  // BE-4 - Print
+  updateScanPrintInfo,
+  createPrintJob,
+  getPrintJobsByScanId,
+
+  // BE-2
   createPatientProfile,
   getPatientProfileByToken,
   updatePatientProfile,
@@ -311,4 +717,15 @@ module.exports = {
   createConsentLog,
   getLatestConsent,
   getConsentHistory,
+
+  // BE-2 - Rewards
+  earnPoints,
+  redeemPoints,
+  getRewardBalance,
+  getRewardHistory,
+  createRedemptionRequest,
+  getRedemptionRequestById,
+  getRedemptionRequestsByToken,
+  approveRedemption,
+  rejectRedemption,
 };
