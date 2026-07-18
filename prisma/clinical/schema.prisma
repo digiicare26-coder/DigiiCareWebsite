@@ -130,3 +130,20 @@ model Consultation {
   @@schema("clinical_schema")
 }
 
+// Consent/disclaimer acceptance log. Append-only by design — every
+// accept/decline creates a NEW row, nothing here is ever updated or
+// deleted. This is the audit trail proving what a patient agreed to
+// and when. See consentController.js for the enforcement of this.
+//
+// Owner: BE-2
+model ConsentLog {
+  consentId      String   @id @default(uuid()) @map("consent_id") @db.Uuid
+  linkToken      String   @map("link_token")
+  consentGiven   Boolean  @map("consent_given")
+  consentVersion String   @map("consent_version")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([linkToken])
+  @@map("consent_logs")
+  @@schema("clinical_schema")
+}
