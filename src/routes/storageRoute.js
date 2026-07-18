@@ -11,14 +11,15 @@ const {
 } = require('../controllers/uploadController');
 const authMiddleware = require('../middleware/auth');
 const deidentifyMiddleware = require('../middleware/deidentify');
+const requireConsent = require('../middleware/requireConsent');
 
 // 🔥 All routes protected
 router.use(authMiddleware);
 router.use(deidentifyMiddleware);
 
 // Upload routes
-router.post('/prescription', upload.single('file'), uploadPrescription);
-router.post('/report', upload.single('file'), uploadReport);
+router.post('/prescription', requireConsent, upload.single('file'), uploadPrescription);
+router.post('/report', requireConsent, upload.single('file'), uploadReport);
 
 // Get routes
 router.get('/scans', getScans);              // 🔥 ADD

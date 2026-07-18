@@ -147,3 +147,59 @@ model ConsentLog {
   @@map("consent_logs")
   @@schema("clinical_schema")
 }
+
+// Reward points system. Two tables by design:
+//   - RewardAccount holds the current balance (one row per patient)
+//   - RewardTransaction is the append-only ledger (every earn/redeem
+//     is a row here, never edited) — this is what lets the balance
+//     be reconstructed/audited if it's ever in doubt.
+// Balance updates and transaction inserts always happen together in
+// a single DB transaction — see rewardsController.js.
+//
+// Owner: BE-2
+model RewardAccount {
+  linkToken     String   @id @map("link_token")
+  pointsBalance Int      @default(0) @map("points_balance")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("reward_accounts")
+  @@schema("clinical_schema")
+}
+
+model RewardTransaction {
+  transactionId String   @id @default(uuid()) @map("transaction_id") @db.Uuid
+  linkToken     String   @map("link_token")
+  points        Int
+  type          String   // "EARNED" or "REDEEMED"
+  reason        String
+  // Prevents the same action (e.g. "profile_completed" for a given
+  // patient) from awarding points twice if a request is retried/
+  // double-clicked. Format: `${linkToken}_${reason}` or similar.
+  actionKey     String   @unique @map("action_key")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([linkToken])
+  @@map("reward_transactions")
+  @@schema("clinical_schema")
+}
+
+// A patient's request to redeem points for something (a discount,
+// a benefit, etc). Points are deducted immediately when the request
+// is created (so they can't be spent twice while pending), and an
+// admin approves or rejects it afterward. A rejection refunds the
+// points. See rewardsController.js for the full flow.
+//
+// Owner: BE-2
+model RedemptionRequest {
+  redemptionId    String    @id @default(uuid()) @map("redemption_id") @db.Uuid
+  linkToken       String    @map("link_token")
+  pointsRequested Int       @map("points_requested")
+  status          String    @default("PENDING")
+  reason          String?
+  requestedAt     DateTime  @default(now()) @map("requested_at")
+  reviewedAt      DateTime? @map("reviewed_at")
+
+  @@index([linkToken])
+  @@map("redemption_requests")
+  @@schema("clinical_schema")
+}

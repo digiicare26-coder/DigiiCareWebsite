@@ -285,6 +285,158 @@ async function getConsentHistory(linkToken) {
   });
 }
 
+// Awards points and logs the transaction in a single atomic DB
+// transaction — either both the balance update and the ledger entry
+// happen, or neither does. If the account doesn't exist yet, it's
+// created here (upsert).
+async function earnPoints(linkToken, points, reason, actionKey) {
+  try {
+    return await clinicalPrisma.$transaction(async (tx) => {
+      const account = await tx.rewardAccount.upsert({
+        where: { linkToken },
+        create: { linkToken, pointsBalance: points },
+        update: { pointsBalance: { increment: points } },
+      });
+      const transaction = await tx.rewardTransaction.create({
+        data: { linkToken, points, type: 'EARNED', reason, actionKey },
+      });
+      return { account, transaction };
+    });
+  } catch (err) {
+    if (err.code === 'P2002') return null; // duplicate actionKey — already awarded
+    throw err;
+  }
+}
+
+// Deducts points and logs the transaction, also atomically. Checks
+// the balance INSIDE the same transaction, so a race condition
+// (two redemptions at once) can't push the balance negative.
+async function redeemPoints(linkToken, points, reason, actionKey) {
+  try {
+    return await clinicalPrisma.$transaction(async (tx) => {
+      const account = await tx.rewardAccount.findUnique({ where: { linkToken } });
+
+      if (!account || account.pointsBalance < points) {
+        throw new Error('INSUFFICIENT_BALANCE');
+      }
+
+      const updatedAccount = await tx.rewardAccount.update({
+        where: { linkToken },
+        data: { pointsBalance: { decrement: points } },
+      });
+      const transaction = await tx.rewardTransaction.create({
+        data: { linkToken, points: -points, type: 'REDEEMED', reason, actionKey },
+      });
+      return { account: updatedAccount, transaction };
+    });
+  } catch (err) {
+    if (err.code === 'P2002') return null; // duplicate actionKey
+    throw err;
+  }
+}
+
+async function getRewardBalance(linkToken) {
+  const account = await clinicalPrisma.rewardAccount.findUnique({ where: { linkToken } });
+  return account ? account.pointsBalance : 0;
+}
+
+async function getRewardHistory(linkToken) {
+  return clinicalPrisma.rewardTransaction.findMany({
+    where: { linkToken },
+    orderBy: { createdAt: 'desc' },
+  });
+}
+
+// Creates a redemption request and deducts the points immediately,
+// atomically. Deducting up-front (rather than only on approval)
+// prevents the same points from being requested twice while a
+// request is still pending.
+async function createRedemptionRequest(linkToken, pointsRequested, reason) {
+  return clinicalPrisma.$transaction(async (tx) => {
+    const account = await tx.rewardAccount.findUnique({ where: { linkToken } });
+
+    if (!account || account.pointsBalance < pointsRequested) {
+      throw new Error('INSUFFICIENT_BALANCE');
+    }
+
+    await tx.rewardAccount.update({
+      where: { linkToken },
+      data: { pointsBalance: { decrement: pointsRequested } },
+    });
+
+    const request = await tx.redemptionRequest.create({
+      data: { linkToken, pointsRequested, reason: reason || null, status: 'PENDING' },
+    });
+
+    await tx.rewardTransaction.create({
+      data: {
+        linkToken,
+        points: -pointsRequested,
+        type: 'REDEEMED',
+        reason: reason || 'redemption_request',
+        actionKey: `${linkToken}_redemption_${request.redemptionId}`,
+      },
+    });
+
+    return request;
+  });
+}
+
+async function getRedemptionRequestById(redemptionId) {
+  return clinicalPrisma.redemptionRequest.findUnique({ where: { redemptionId } });
+}
+
+async function getRedemptionRequestsByToken(linkToken) {
+  return clinicalPrisma.redemptionRequest.findMany({
+    where: { linkToken },
+    orderBy: { requestedAt: 'desc' },
+  });
+}
+
+// Approval just flips the status — the points were already deducted
+// when the request was created, so nothing else needs to happen.
+async function approveRedemption(redemptionId) {
+  return clinicalPrisma.redemptionRequest.updateMany({
+    where: { redemptionId, status: 'PENDING' },
+    data: { status: 'APPROVED', reviewedAt: new Date() },
+  });
+}
+
+// Rejection refunds the points back to the account — atomically,
+// so the refund and the status change either both happen or neither
+// does.
+async function rejectRedemption(redemptionId) {
+  return clinicalPrisma.$transaction(async (tx) => {
+    const request = await tx.redemptionRequest.findFirst({
+      where: { redemptionId, status: 'PENDING' },
+    });
+
+    if (!request) return null; // not found, or already reviewed
+
+    const updated = await tx.redemptionRequest.update({
+      where: { redemptionId },
+      data: { status: 'REJECTED', reviewedAt: new Date() },
+    });
+
+    await tx.rewardAccount.update({
+      where: { linkToken: request.linkToken },
+      data: { pointsBalance: { increment: request.pointsRequested } },
+    });
+
+    await tx.rewardTransaction.create({
+      data: {
+        linkToken: request.linkToken,
+        points: request.pointsRequested,
+        type: 'EARNED',
+        reason: 'redemption_rejected_refund',
+        actionKey: `${request.linkToken}_refund_${redemptionId}`,
+      },
+    });
+
+    return updated;
+  });
+}
+
 // ============================================================
 // MODULE EXPORTS
 // ============================================================
@@ -311,4 +463,13 @@ module.exports = {
   createConsentLog,
   getLatestConsent,
   getConsentHistory,
+  earnPoints,
+  redeemPoints,
+  getRewardBalance,
+  getRewardHistory,
+  createRedemptionRequest,
+  getRedemptionRequestById,
+  getRedemptionRequestsByToken,
+  approveRedemption,
+  rejectRedemption,
 };
