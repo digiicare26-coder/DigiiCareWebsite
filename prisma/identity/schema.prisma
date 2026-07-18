@@ -1,3 +1,16 @@
+// ============================================================
+// DATABASE: identity_schema
+// PATH: prisma/identity/schema.prisma
+// ============================================================
+// This schema manages all identity/authentication data:
+// - Patients (independent + linked family accounts)
+// - Doctors (independent accounts)
+// - OTP verifications (patient + doctor)
+// - Link tokens (patient + doctor)
+// - Revoked tokens (JWT blacklist)
+// - Scans + PrintJobs (clinical data stored in identity schema)
+// ============================================================
+
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["multiSchema"]
@@ -7,42 +20,41 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("IDENTITY_DATABASE_URL")
-  schemas  = ["identity_schema"]
+  schemas  = ["identity_schema", "clinical_schema"]  // ✅ Both schemas
 }
 
+// ============================================================
+// PATIENT MODEL (Identity)
+// ============================================================
+// - Independent account: uid = "1", "2", "3"...
+// - Linked account: uid = "{parent_uid}_{n}" e.g. "1_1", "1_2"
+// - passwordHash: NULL for linked accounts (they never login)
+// ============================================================
 model Patient {
-  patientId    Int          @id @default(autoincrement()) @map("patient_id")
-  fullName     String       @map("full_name")
-  email        String?      @unique
-  cnic         String?      @unique
-  mobileNumber String?      @unique @map("mobile_number")
-  // Sequential login ID: "1", "2", "3"... for an independent account.
-  // "{parent_uid}_{n}" e.g. "1_1", "1_2" for a linked spouse/child
-  // account. Generated in identityRepository.js.
-  uid          String?      @unique
-  // Hashed with bcrypt, never store the plain text password.
-  // Always NULL for a linked spouse/child account — they never log
-  // in on their own.
-  passwordHash String?      @map("password_hash")
-  // Sub-ID linking: NULL for an independent father/husband account.
-  // Set to that patient's own patientId (self-FK) when this row is
-  // a linked spouse/child account — see identityRepository.js ->
-  // createSubAccount.
-  parentPatientId Int?      @map("parent_patient_id")
-  // Only set on a linked row: "child" or "spouse". NULL otherwise.
-  relation     String?
-  linkToken    LinkToken?
-  otpRequests  OtpVerification[]
-  parent       Patient?     @relation("PatientFamily", fields: [parentPatientId], references: [patientId])
-  children     Patient[]    @relation("PatientFamily")
+  patientId      Int          @id @default(autoincrement()) @map("patient_id")
+  fullName       String       @map("full_name")
+  email          String?      @unique
+  cnic           String?      @unique
+  mobileNumber   String?      @unique @map("mobile_number")
+  uid            String?      @unique
+  passwordHash   String?      @map("password_hash")
+  parentPatientId Int?        @map("parent_patient_id")
+  relation       String?      // "child" or "spouse" for linked accounts
+  linkToken      LinkToken?
+  otpRequests    OtpVerification[]
+  parent         Patient?     @relation("PatientFamily", fields: [parentPatientId], references: [patientId])
+  children       Patient[]    @relation("PatientFamily")
 
   @@map("patients")
   @@schema("identity_schema")
 }
 
-// Login OTP flow (BE-1). Lives in identity_schema on purpose —
-// an OTP is only ever tied to a mobile number / CNIC / UID, which
-// is identifying data. It never touches clinical_schema.
+// ============================================================
+// PATIENT OTP MODEL
+// ============================================================
+// Lives in identity_schema — OTP is tied to mobile/CNIC/UID
+// Never touches clinical_schema
+// ============================================================
 model OtpVerification {
   otpId       Int       @id @default(autoincrement()) @map("otp_id")
   patientId   Int       @map("patient_id")
@@ -60,6 +72,11 @@ model OtpVerification {
   @@schema("identity_schema")
 }
 
+// ============================================================
+// PATIENT LINK TOKEN MODEL
+// ============================================================
+// One-to-one with Patient — used to access clinical data
+// ============================================================
 model LinkToken {
   linkToken String  @id @map("link_token")
   patientId Int     @unique @map("patient_id")
@@ -69,24 +86,18 @@ model LinkToken {
   @@schema("identity_schema")
 }
 
-// =============================================================
-// Doctor identity + auth — mirrors Patient's signup/OTP/login
-// shape exactly, just for doctors. Lives in its own tables so
-// none of the Patient/OtpVerification/LinkToken models above are
-// touched. doctorToken (below) is what src/routes/doctorRoute.js
-// already expects as the clinical-side identifier, so a doctor
-// signing up here can immediately use the existing
-// POST /api/doctor endpoint with the doctorToken this issues.
-// =============================================================
+// ============================================================
+// DOCTOR MODEL (Identity)
+// ============================================================
+// - Independent account with uid = "1", "2", "3"...
+// - doctorToken is the clinical-side identifier
+// ============================================================
 model Doctor {
   doctorId      Int                    @id @default(autoincrement()) @map("doctor_id")
   fullName      String                 @map("full_name")
   email         String?                @unique
   licenseNumber String?                @unique @map("license_number")
   mobileNumber  String?                @unique @map("mobile_number")
-  // Sequential login ID assigned at signup time (1, 2, 3, ...),
-  // from identity_schema.doctor_uid_seq — a separate sequence from
-  // patients.uid, since doctors are a different account type.
   uid           String?                @unique
   passwordHash  String?                @map("password_hash")
   doctorToken   DoctorLinkToken?
@@ -96,6 +107,11 @@ model Doctor {
   @@schema("identity_schema")
 }
 
+// ============================================================
+// DOCTOR OTP MODEL
+// ============================================================
+// Similar to patient OTP but for doctors
+// ============================================================
 model DoctorOtpVerification {
   otpId       Int      @id @default(autoincrement()) @map("otp_id")
   doctorId    Int      @map("doctor_id")
@@ -113,6 +129,11 @@ model DoctorOtpVerification {
   @@schema("identity_schema")
 }
 
+// ============================================================
+// DOCTOR LINK TOKEN MODEL
+// ============================================================
+// One-to-one with Doctor — used to access clinical data
+// ============================================================
 model DoctorLinkToken {
   doctorToken String @id @map("doctor_token")
   doctorId    Int    @unique @map("doctor_id")
@@ -122,17 +143,76 @@ model DoctorLinkToken {
   @@schema("identity_schema")
 }
 
-// Shared JWT blacklist for logout — both patient and doctor tokens
-// go here. JWTs are stateless, so "logout" only becomes real once
-// the token is checked against this table on every request (see
-// src/middleware/auth.js and src/middleware/doctorAuth.js).
+// ============================================================
+// REVOKED TOKEN MODEL (JWT Blacklist)
+// ============================================================
+// Both patient and doctor JWTs go here for logout
+// ============================================================
 model RevokedToken {
   token     String   @id
   revokedAt DateTime @default(now()) @map("revoked_at")
-  // Copied from the JWT's own expiry — lets a cleanup job purge
-  // rows once the token would have expired naturally anyway.
   expiresAt DateTime @map("expires_at")
 
   @@map("revoked_tokens")
   @@schema("identity_schema")
+}
+
+// ============================================================
+// CLINICAL SCHEMA MODELS (Stored in identity_schema for simplicity)
+// ============================================================
+// NOTE: These models are defined here because they reference
+// identity_schema tables. In production, these should be in
+// prisma/clinical/schema.prisma with multiSchema support.
+// ============================================================
+
+model Scan {
+  scanId        String    @id @default(uuid()) @map("scan_id") @db.Uuid
+  linkToken     String    @map("link_token")
+  scanType      String    @map("scan_type")
+  fileName      String    @map("file_name")
+  filePath      String    @map("file_path")
+  thumbnailPath String?   @map("thumbnail_path")
+  fileSize      Int?      @map("file_size")
+  mimeType      String?   @map("mime_type")
+  ocrText       String?   @map("ocr_text")
+  ocrConfidence Float?    @map("ocr_confidence")
+  status        String    @default("UPLOADED")
+  metadata      Json?
+  uploadedAt    DateTime? @default(now()) @map("uploaded_at")
+  processedAt   DateTime? @map("processed_at")
+
+  // 🆕 BE-4: Report History/Versioning fields
+  version       Int       @default(1) @map("version")
+  parentScanId  String?   @map("parent_scan_id") @db.Uuid
+  isLatest      Boolean   @default(true) @map("is_latest")
+
+  // 🆕 BE-4: Print fields
+  printedPdfPath String?   @map("printed_pdf_path")
+  printedAt      DateTime? @map("printed_at")
+
+  // Relations
+  parentScan    Scan?     @relation("ScanVersions", fields: [parentScanId], references: [scanId])
+  versions      Scan[]    @relation("ScanVersions")
+
+  printJobs     PrintJob[]
+
+  @@index([linkToken])
+  @@index([parentScanId])
+  @@index([isLatest])
+  @@map("scans")
+  @@schema("clinical_schema")  // ✅ Explicitly in clinical_schema
+}
+
+// 🆕 BE-4: PrintJob model
+model PrintJob {
+  id        Int      @id @default(autoincrement())
+  scanId    String   @map("scan_id") @db.Uuid
+  pdfPath   String   @map("pdf_path")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  scan      Scan     @relation(fields: [scanId], references: [scanId], onDelete: Cascade)
+
+  @@index([scanId])
+  @@map("print_jobs")
+  @@schema("clinical_schema")  // ✅ Explicitly in clinical_schema
 }

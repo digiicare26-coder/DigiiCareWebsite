@@ -39,7 +39,7 @@ async function getVitalsByToken(linkToken) {
 // tell me and I'll add its model + these functions back.
 
 // ============================================================
-// BE-4 FUNCTIONS
+// BE-4 FUNCTIONS (Original)
 // ============================================================
 
 async function saveScan(linkToken, scanData) {
@@ -57,6 +57,8 @@ async function saveScan(linkToken, scanData) {
         mimeType,
         status: 'UPLOADED',
         metadata: metadata || {},
+        version: 1,           // 🆕 First version
+        isLatest: true,       // 🆕 Mark as latest
       },
     });
 
@@ -72,13 +74,21 @@ async function getScansByToken(linkToken, page = 1, limit = 10) {
 
   const [scans, total] = await Promise.all([
     clinicalPrisma.scan.findMany({
-      where: { linkToken, status: { not: 'DELETED' } },
+      where: { 
+        linkToken, 
+        status: { not: 'DELETED' },
+        isLatest: true,           // 🆕 Only return latest versions by default
+      },
       orderBy: { uploadedAt: 'desc' },
       skip,
       take: limit,
     }),
     clinicalPrisma.scan.count({
-      where: { linkToken, status: { not: 'DELETED' } },
+      where: { 
+        linkToken, 
+        status: { not: 'DELETED' },
+        isLatest: true,           // 🆕 Only count latest versions
+      },
     }),
   ]);
 
@@ -145,6 +155,203 @@ async function logAudit(auditData) {
   } catch (err) {
     console.error('Audit log failed:', err.message);
     return null;
+  }
+}
+
+// ============================================================
+// 🆕 BE-4: REPORT HISTORY / VERSIONING FUNCTIONS
+// ============================================================
+
+/**
+ * Create a new version of an existing scan
+ * This automatically marks all older versions as not latest
+ */
+async function createNewVersion(originalScanId, scanData) {
+  try {
+    // 1. Get the current scan
+    const currentScan = await clinicalPrisma.scan.findUnique({
+      where: { scanId: originalScanId }
+    });
+
+    if (!currentScan) {
+      throw new Error('Original scan not found');
+    }
+
+    // 2. Determine the root parent ID
+    const parentScanId = currentScan.parentScanId || currentScan.scanId;
+
+    // 3. Get the latest version number for this parent chain
+    const latestVersion = await clinicalPrisma.scan.findFirst({
+      where: {
+        OR: [
+          { scanId: parentScanId },
+          { parentScanId: parentScanId }
+        ]
+      },
+      orderBy: { version: 'desc' }
+    });
+
+    const newVersionNumber = (latestVersion?.version || 0) + 1;
+
+    // 4. Mark all existing versions as not latest
+    await clinicalPrisma.scan.updateMany({
+      where: {
+        OR: [
+          { scanId: parentScanId },
+          { parentScanId: parentScanId }
+        ]
+      },
+      data: {
+        isLatest: false
+      }
+    });
+
+    // 5. Create new version
+    const { scanType, fileName, filePath, thumbnailPath, fileSize, mimeType, metadata } = scanData;
+
+    const newScan = await clinicalPrisma.scan.create({
+      data: {
+        linkToken: currentScan.linkToken,
+        scanType: scanType || currentScan.scanType,
+        fileName: fileName,
+        filePath: filePath,
+        thumbnailPath: thumbnailPath || null,
+        fileSize: fileSize,
+        mimeType: mimeType,
+        status: 'UPLOADED',
+        metadata: metadata || {},
+        version: newVersionNumber,
+        parentScanId: parentScanId,
+        isLatest: true
+      }
+    });
+
+    return newScan;
+
+  } catch (error) {
+    console.error('Create New Version Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get all versions of a scan (including the original)
+ */
+async function getScanHistory(scanId) {
+  try {
+    // First find the scan
+    const originalScan = await clinicalPrisma.scan.findUnique({
+      where: { scanId: scanId }
+    });
+
+    if (!originalScan) {
+      return null;
+    }
+
+    // Determine the root parent ID
+    const rootId = originalScan.parentScanId || originalScan.scanId;
+
+    // Get all versions
+    const versions = await clinicalPrisma.scan.findMany({
+      where: {
+        OR: [
+          { scanId: rootId },
+          { parentScanId: rootId }
+        ],
+        status: { not: 'DELETED' }
+      },
+      orderBy: {
+        version: 'asc'
+      }
+    });
+
+    return {
+      rootId: rootId,
+      totalVersions: versions.length,
+      versions: versions
+    };
+
+  } catch (error) {
+    console.error('Get Scan History Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get the latest version of a scan
+ */
+async function getLatestVersion(scanId) {
+  try {
+    const originalScan = await clinicalPrisma.scan.findUnique({
+      where: { scanId: scanId }
+    });
+
+    if (!originalScan) {
+      return null;
+    }
+
+    const rootId = originalScan.parentScanId || originalScan.scanId;
+
+    const latest = await clinicalPrisma.scan.findFirst({
+      where: {
+        OR: [
+          { scanId: rootId },
+          { parentScanId: rootId }
+        ],
+        isLatest: true,
+        status: { not: 'DELETED' }
+      }
+    });
+
+    return latest;
+
+  } catch (error) {
+    console.error('Get Latest Version Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get all scans for a patient (only latest versions)
+ */
+async function getScansByLinkToken(linkToken) {
+  try {
+    const scans = await clinicalPrisma.scan.findMany({
+      where: {
+        linkToken: linkToken,
+        isLatest: true,
+        status: { not: 'DELETED' }
+      },
+      orderBy: {
+        uploadedAt: 'desc'
+      }
+    });
+    return scans;
+  } catch (error) {
+    console.error('Get Scans By LinkToken Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get a specific version by version number
+ */
+async function getScanByVersion(rootId, version) {
+  try {
+    const scan = await clinicalPrisma.scan.findFirst({
+      where: {
+        OR: [
+          { scanId: rootId },
+          { parentScanId: rootId }
+        ],
+        version: version,
+        status: { not: 'DELETED' }
+      }
+    });
+    return scan;
+  } catch (error) {
+    console.error('Get Scan By Version Error:', error);
+    throw error;
   }
 }
 
@@ -286,18 +493,92 @@ async function getConsentHistory(linkToken) {
 }
 
 // ============================================================
+// 🆕 BE-4: PRINT FUNCTIONS
+// ============================================================
+
+/**
+ * Update scan with printed PDF path
+ */
+async function updateScanPrintInfo(scanId, pdfPath) {
+  try {
+    const result = await clinicalPrisma.scan.update({
+      where: { scanId },
+      data: {
+        printedPdfPath: pdfPath,
+        printedAt: new Date()
+      }
+    });
+    return result;
+  } catch (error) {
+    console.error('Update Scan Print Info Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Create a print job log
+ */
+async function createPrintJob(scanId, pdfPath) {
+  try {
+    const result = await clinicalPrisma.printJob.create({
+      data: {
+        scanId: scanId,
+        pdfPath: pdfPath
+      }
+    });
+    return result;
+  } catch (error) {
+    console.error('Create Print Job Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get print jobs for a scan
+ */
+async function getPrintJobsByScanId(scanId) {
+  try {
+    const printJobs = await clinicalPrisma.printJob.findMany({
+      where: { scanId: scanId },
+      orderBy: { createdAt: 'desc' }
+    });
+    return printJobs;
+  } catch (error) {
+    console.error('Get Print Jobs Error:', error);
+    return [];
+  }
+}
+
+// ============================================================
 // MODULE EXPORTS
 // ============================================================
 
 module.exports = {
+  // BE-1
   saveVitals,
   getVitalsByToken,
+
+  // BE-4 - Original
   saveScan,
   getScansByToken,
   getScanById,
   updateScanStatus,
   deleteScan,
   logAudit,
+
+  // 🆕 BE-4 - Versioning
+  createNewVersion,
+  getScanHistory,
+  getLatestVersion,
+  getScansByLinkToken,
+  getScanByVersion,
+
+  // 🆕 BE-4 - Print
+  updateScanPrintInfo,
+  createPrintJob,
+  getPrintJobsByScanId,
+
+  // BE-2
   createPatientProfile,
   getPatientProfileByToken,
   updatePatientProfile,
