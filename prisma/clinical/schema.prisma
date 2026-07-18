@@ -1,3 +1,19 @@
+// ============================================================
+// DATABASE: clinical_schema
+// PATH: prisma/clinical/schema.prisma
+// ============================================================
+// This schema manages all clinical/medical data:
+// - Vitals (patient health metrics)
+// - Scans (uploaded documents/images with versioning)
+// - PrintJobs (PDF generation history)
+// - AuditLogs (system activity tracking)
+// - PatientProfile (patient preferences)
+// - Doctor (clinical profile)
+// - Medicine (reference catalog)
+// - Consultation (doctor-patient sessions)
+// - ConsentLog (patient consent history)
+// ============================================================
+
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["multiSchema"]
@@ -10,15 +26,24 @@ datasource db {
   schemas  = ["clinical_schema"]
 }
 
+// ============================================================
+// ENUMS
+// ============================================================
+
 enum GenderEnum {
   MALE
   FEMALE
   OTHER
-
   @@map("gender_enum")
   @@schema("clinical_schema")
 }
 
+// ============================================================
+// VITALS MODEL (Patient Health Metrics)
+// ============================================================
+// linkToken: references identity_schema.link_tokens.link_token
+// No PII stored here — only clinical data
+// ============================================================
 model Vitals {
   recordId    String     @id @default(uuid()) @map("record_id") @db.Uuid
   linkToken   String?    @map("link_token")
@@ -34,6 +59,13 @@ model Vitals {
   @@schema("clinical_schema")
 }
 
+// ============================================================
+// SCAN MODEL (Uploaded Documents/Images)
+// ============================================================
+// - Supports versioning (re-upload creates new version)
+// - isLatest flag for quick latest version retrieval
+// - parentScanId for version chain
+// ============================================================
 model Scan {
   scanId        String    @id @default(uuid()) @map("scan_id") @db.Uuid
   linkToken     String    @map("link_token")
@@ -50,10 +82,51 @@ model Scan {
   uploadedAt    DateTime? @default(now()) @map("uploaded_at")
   processedAt   DateTime? @map("processed_at")
 
+  // 🆕 BE-4: Report History/Versioning fields
+  version       Int       @default(1) @map("version")
+  parentScanId  String?   @map("parent_scan_id") @db.Uuid
+  isLatest      Boolean   @default(true) @map("is_latest")
+
+  // 🆕 BE-4: Print fields
+  printedPdfPath String?   @map("printed_pdf_path")
+  printedAt      DateTime? @map("printed_at")
+
+  // Relations
+  parentScan    Scan?     @relation("ScanVersions", fields: [parentScanId], references: [scanId])
+  versions      Scan[]    @relation("ScanVersions")
+  printJobs     PrintJob[]
+
+  @@index([linkToken])
+  @@index([parentScanId])
+  @@index([isLatest])
   @@map("scans")
   @@schema("clinical_schema")
 }
 
+// ============================================================
+// PRINT JOB MODEL (PDF Generation History)
+// ============================================================
+// Tracks every PDF generation for a scan
+// Helps with audit and version history
+// ============================================================
+model PrintJob {
+  id        Int      @id @default(autoincrement())
+  scanId    String   @map("scan_id") @db.Uuid
+  pdfPath   String   @map("pdf_path")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  scan      Scan     @relation(fields: [scanId], references: [scanId], onDelete: Cascade)
+
+  @@index([scanId])
+  @@map("print_jobs")
+  @@schema("clinical_schema")
+}
+
+// ============================================================
+// AUDIT LOG MODEL (System Activity Tracking)
+// ============================================================
+// Append-only log for all clinical data access/modification
+// ============================================================
 model AuditLog {
   logId        String    @id @default(uuid()) @map("log_id") @db.Uuid
   linkToken    String    @map("link_token")
@@ -69,6 +142,11 @@ model AuditLog {
   @@schema("clinical_schema")
 }
 
+// ============================================================
+// PATIENT PROFILE MODEL
+// ============================================================
+// Preferences and profile data for patients
+// ============================================================
 model PatientProfile {
   profileId         String   @id @default(uuid()) @map("profile_id") @db.Uuid
   linkToken         String   @unique @map("link_token")
@@ -81,6 +159,12 @@ model PatientProfile {
   @@schema("clinical_schema")
 }
 
+// ============================================================
+// DOCTOR CLINICAL MODEL
+// ============================================================
+// doctorToken references identity_schema.doctor_link_tokens.doctor_token
+// isApproved: must be approved by admin before accessing patients
+// ============================================================
 model Doctor {
   doctorId       String   @id @default(uuid()) @map("doctor_id") @db.Uuid
   doctorToken    String   @unique @map("doctor_token")
@@ -95,9 +179,12 @@ model Doctor {
   @@schema("clinical_schema")
 }
 
-// BE-3 — medicine reference catalog for the recommender.
-// Not linked to any patient (linkToken) — this is shared reference
-// data, same for every user, not clinical data about a specific person.
+// ============================================================
+// MEDICINE MODEL (Reference Catalog)
+// ============================================================
+// Shared reference data — not linked to any patient
+// Used by the recommender system (BE-3)
+// ============================================================
 model Medicine {
   id               Int      @id @default(autoincrement())
   name             String
@@ -115,6 +202,11 @@ model Medicine {
   @@schema("clinical_schema")
 }
 
+// ============================================================
+// CONSULTATION MODEL
+// ============================================================
+// Links doctors and patients for consultation sessions
+// ============================================================
 model Consultation {
   consultationId String   @id @default(uuid()) @map("consultation_id") @db.Uuid
   doctorToken    String   @map("doctor_token")
@@ -130,12 +222,12 @@ model Consultation {
   @@schema("clinical_schema")
 }
 
-// Consent/disclaimer acceptance log. Append-only by design — every
-// accept/decline creates a NEW row, nothing here is ever updated or
-// deleted. This is the audit trail proving what a patient agreed to
-// and when. See consentController.js for the enforcement of this.
-//
-// Owner: BE-2
+// ============================================================
+// CONSENT LOG MODEL
+// ============================================================
+// Append-only log for patient consent (BE-2)
+// Every accept/decline creates a new row — never updated/deleted
+// ============================================================
 model ConsentLog {
   consentId      String   @id @default(uuid()) @map("consent_id") @db.Uuid
   linkToken      String   @map("link_token")
