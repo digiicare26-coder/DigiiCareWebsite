@@ -1,31 +1,74 @@
-// src/routes/storageRoutes.js
+// ============================================
+// BE-4: Storage Routes - Complete (Versioning + Print)
+// ============================================
+
 const express = require('express');
 const router = express.Router();
 const {
   upload,
   uploadPrescription,
   uploadReport,
-  getScans,      // 🔥 ADD
-  getScan,       // 🔥 ADD
-  deleteScan     // 🔥 ADD
+  getScans,
+  getScan,
+  deleteScan,
+  // 🆕 BE-4 Versioning functions
+  getScanHistory,
+  getLatestVersion,
+  getScanByVersion,
+  // 🆕 BE-4 Print functions
+  generatePrintPDF,
+  downloadPDF,
+  getPrintHistory
 } = require('../controllers/uploadController');
 const authMiddleware = require('../middleware/auth');
 const deidentifyMiddleware = require('../middleware/deidentify');
 const requireConsent = require('../middleware/requireConsent');
 
-// 🔥 All routes protected
+// ============================================================
+// ALL ROUTES PROTECTED
+// ============================================================
+
 router.use(authMiddleware);
 router.use(deidentifyMiddleware);
 
-// Upload routes
+// ============================================================
+// UPLOAD ROUTES
+// ============================================================
+
 router.post('/prescription', requireConsent, upload.single('file'), uploadPrescription);
 router.post('/report', requireConsent, upload.single('file'), uploadReport);
 
-// Get routes
-router.get('/scans', getScans);              // 🔥 ADD
-router.get('/scans/:scanId', getScan);       // 🔥 ADD
+// ============================================================
+// SCAN RETRIEVAL ROUTES
+// ============================================================
 
-// Delete route
-router.delete('/scans/:scanId', deleteScan); // 🔥 ADD
+router.get('/scans', getScans);
+router.get('/scans/:scanId', getScan);
+
+// ============================================================
+// 🆕 BE-4: VERSIONING ROUTES
+// ============================================================
+
+router.get('/scans/:scanId/history', getScanHistory);
+router.get('/scans/:scanId/latest', getLatestVersion);
+router.get('/scans/:scanId/version/:version', getScanByVersion);
+
+// ============================================================
+// 🆕 BE-4: PRINT ROUTES
+// ============================================================
+
+router.post('/scans/:scanId/print', generatePrintPDF);
+router.get('/scans/:scanId/print/download', downloadPDF);
+router.get('/scans/:scanId/print/history', getPrintHistory);
+
+// ============================================================
+// DELETE ROUTE
+// ============================================================
+
+router.delete('/scans/:scanId', deleteScan);
+
+// ============================================================
+// MODULE EXPORTS
+// ============================================================
 
 module.exports = router;
