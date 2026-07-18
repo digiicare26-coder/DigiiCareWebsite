@@ -285,6 +285,68 @@ async function getConsentHistory(linkToken) {
   });
 }
 
+// Awards points and logs the transaction in a single atomic DB
+// transaction — either both the balance update and the ledger entry
+// happen, or neither does. If the account doesn't exist yet, it's
+// created here (upsert).
+async function earnPoints(linkToken, points, reason, actionKey) {
+  try {
+    return await clinicalPrisma.$transaction(async (tx) => {
+      const account = await tx.rewardAccount.upsert({
+        where: { linkToken },
+        create: { linkToken, pointsBalance: points },
+        update: { pointsBalance: { increment: points } },
+      });
+      const transaction = await tx.rewardTransaction.create({
+        data: { linkToken, points, type: 'EARNED', reason, actionKey },
+      });
+      return { account, transaction };
+    });
+  } catch (err) {
+    if (err.code === 'P2002') return null; // duplicate actionKey — already awarded
+    throw err;
+  }
+}
+
+// Deducts points and logs the transaction, also atomically. Checks
+// the balance INSIDE the same transaction, so a race condition
+// (two redemptions at once) can't push the balance negative.
+async function redeemPoints(linkToken, points, reason, actionKey) {
+  try {
+    return await clinicalPrisma.$transaction(async (tx) => {
+      const account = await tx.rewardAccount.findUnique({ where: { linkToken } });
+
+      if (!account || account.pointsBalance < points) {
+        throw new Error('INSUFFICIENT_BALANCE');
+      }
+
+      const updatedAccount = await tx.rewardAccount.update({
+        where: { linkToken },
+        data: { pointsBalance: { decrement: points } },
+      });
+      const transaction = await tx.rewardTransaction.create({
+        data: { linkToken, points: -points, type: 'REDEEMED', reason, actionKey },
+      });
+      return { account: updatedAccount, transaction };
+    });
+  } catch (err) {
+    if (err.code === 'P2002') return null; // duplicate actionKey
+    throw err;
+  }
+}
+
+async function getRewardBalance(linkToken) {
+  const account = await clinicalPrisma.rewardAccount.findUnique({ where: { linkToken } });
+  return account ? account.pointsBalance : 0;
+}
+
+async function getRewardHistory(linkToken) {
+  return clinicalPrisma.rewardTransaction.findMany({
+    where: { linkToken },
+    orderBy: { createdAt: 'desc' },
+  });
+}
+
 // ============================================================
 // MODULE EXPORTS
 // ============================================================
@@ -311,4 +373,8 @@ module.exports = {
   createConsentLog,
   getLatestConsent,
   getConsentHistory,
+  earnPoints,
+  redeemPoints,
+  getRewardBalance,
+  getRewardHistory,
 };
