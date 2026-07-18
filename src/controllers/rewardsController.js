@@ -75,4 +75,75 @@ async function redeem(req, res) {
   }
 }
 
-module.exports = { getBalance, getHistory, testEarnPoints, redeem };
+async function createRedemptionRequest(req, res) {
+  try {
+    const { linkToken } = req.user;
+    const { points, reason } = req.body;
+
+    if (typeof points !== 'number' || points <= 0) {
+      return res.status(400).json({ success: false, error: 'points must be a positive number.' });
+    }
+
+    const request = await clinicalRepository.createRedemptionRequest(linkToken, points, reason);
+    return res.status(201).json({ success: true, data: request });
+  } catch (err) {
+    if (err.message === 'INSUFFICIENT_BALANCE') {
+      return res.status(400).json({ success: false, error: 'Insufficient points balance.' });
+    }
+    return res.status(500).json({ success: false, error: err.message });
+  }
+}
+
+async function getMyRedemptionRequests(req, res) {
+  try {
+    const { linkToken } = req.user;
+    const requests = await clinicalRepository.getRedemptionRequestsByToken(linkToken);
+    return res.status(200).json({ success: true, data: requests });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+}
+
+// Admin action — no admin panel/auth exists yet, same situation as
+// Doctor's approveDoctor endpoint. Stays open (no auth) until an
+// admin auth system is built. See doctorController.js for the
+// identical pattern already in use.
+async function approveRedemptionRequest(req, res) {
+  try {
+    const { redemptionId } = req.params;
+    const result = await clinicalRepository.approveRedemption(redemptionId);
+
+    if (result.count === 0) {
+      return res.status(404).json({ success: false, error: 'Request not found or already reviewed.' });
+    }
+    const request = await clinicalRepository.getRedemptionRequestById(redemptionId);
+    return res.status(200).json({ success: true, data: request });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+}
+
+async function rejectRedemptionRequest(req, res) {
+  try {
+    const { redemptionId } = req.params;
+    const request = await clinicalRepository.rejectRedemption(redemptionId);
+
+    if (!request) {
+      return res.status(404).json({ success: false, error: 'Request not found or already reviewed.' });
+    }
+    return res.status(200).json({ success: true, data: request, message: 'Request rejected and points refunded.' });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+}
+
+module.exports = {
+  getBalance,
+  getHistory,
+  testEarnPoints,
+  redeem,
+  createRedemptionRequest,
+  getMyRedemptionRequests,
+  approveRedemptionRequest,
+  rejectRedemptionRequest,
+};
