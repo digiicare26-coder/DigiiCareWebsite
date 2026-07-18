@@ -21,6 +21,7 @@ const consultationRoute = require('./src/routes/consultationRoute'); // BE-2
 const searchRoute = require('./src/routes/searchRoute');             // BE-4
 const consentRoute = require('./src/routes/consentRoute');           // BE-2
 const printRoutes = require('./src/routes/printRoute');              // BE-4
+const rewardsRoute = require('./src/routes/rewardsRoute');           // BE-2 Rewards
 
 // ============================================
 // MIDDLEWARE IMPORTS
@@ -82,17 +83,13 @@ app.use('/api/search', searchRoute);
 // --- Family/Sub-account ---
 app.use('/api/family', subAccountRoute);
 
+// --- Rewards System (BE-2) ---
+app.use('/api/rewards', rewardsRoute);
+
 // ============================================
 // 🆕 DEBUG: LIST ALL ACTUAL REGISTERED ROUTES
-// Visit GET /api/routes anytime to see every real
-// endpoint + method that exists — no more guessing
-// paths like /register vs /signup.
 // ============================================
 app.get('/api/routes', (req, res) => {
-    // Known prefix -> router pairs (matches the app.use() calls above).
-    // Using explicit prefixes here instead of parsing Express's internal
-    // regexp stack, since that internal format differs between Express
-    // versions and is unreliable to parse.
     const mounted = [
         ['/api/auth', authRoute],
         ['/api/doctor-auth', doctorAuthRoute],
@@ -105,6 +102,7 @@ app.get('/api/routes', (req, res) => {
         ['/api/recommend', recommendRoute],
         ['/api/search', searchRoute],
         ['/api/family', subAccountRoute],
+        ['/api/rewards', rewardsRoute],
     ];
 
     const routes = [];
@@ -126,11 +124,6 @@ app.get('/api/routes', (req, res) => {
         routes: routes.sort(),
     });
 });
-
-// ============================================
-// DE-IDENTIFICATION MIDDLEWARE (Applied per-route basis in controllers)
-// ============================================
-// Note: Middleware is applied in individual routes, not globally
 
 // ============================================
 // 404 HANDLER
