@@ -33,11 +33,6 @@ async function getVitalsByToken(linkToken) {
   });
 }
 
-// NOTE: saveReport()/getReportsByToken() removed — there is no
-// clinical_schema.reports table in create_scans_tables.sql or
-// create_vitals_table.sql. If a reports table exists elsewhere,
-// tell me and I'll add its model + these functions back.
-
 // ============================================================
 // BE-4 FUNCTIONS (Original)
 // ============================================================
@@ -57,8 +52,8 @@ async function saveScan(linkToken, scanData) {
         mimeType,
         status: 'UPLOADED',
         metadata: metadata || {},
-        version: 1,           // 🆕 First version
-        isLatest: true,       // 🆕 Mark as latest
+        version: 1,
+        isLatest: true,
       },
     });
 
@@ -77,7 +72,7 @@ async function getScansByToken(linkToken, page = 1, limit = 10) {
       where: { 
         linkToken, 
         status: { not: 'DELETED' },
-        isLatest: true,           // 🆕 Only return latest versions by default
+        isLatest: true,
       },
       orderBy: { uploadedAt: 'desc' },
       skip,
@@ -87,7 +82,7 @@ async function getScansByToken(linkToken, page = 1, limit = 10) {
       where: { 
         linkToken, 
         status: { not: 'DELETED' },
-        isLatest: true,           // 🆕 Only count latest versions
+        isLatest: true,
       },
     }),
   ]);
@@ -122,7 +117,7 @@ async function updateScanStatus(scanId, status, ocrText = null, confidence = nul
     });
     return result?.scanId;
   } catch (err) {
-    if (err.code === 'P2025') return undefined; // record not found
+    if (err.code === 'P2025') return undefined;
     throw err;
   }
 }
@@ -159,16 +154,36 @@ async function logAudit(auditData) {
 }
 
 // ============================================================
+// 🆕 BE-4: SEARCH SCANS BY OCR TEXT
+// ============================================================
+
+async function searchScansByText(linkToken, searchTerm) {
+  try {
+    const scans = await clinicalPrisma.scan.findMany({
+      where: {
+        linkToken: linkToken,
+        OR: [
+          { ocrText: { contains: searchTerm, mode: 'insensitive' } },
+          { fileName: { contains: searchTerm, mode: 'insensitive' } }
+        ],
+        status: { not: 'DELETED' }
+      },
+      orderBy: { uploadedAt: 'desc' }
+    });
+    
+    return scans;
+  } catch (err) {
+    console.error('Search scans error:', err);
+    throw err;
+  }
+}
+
+// ============================================================
 // 🆕 BE-4: REPORT HISTORY / VERSIONING FUNCTIONS
 // ============================================================
 
-/**
- * Create a new version of an existing scan
- * This automatically marks all older versions as not latest
- */
 async function createNewVersion(originalScanId, scanData) {
   try {
-    // 1. Get the current scan
     const currentScan = await clinicalPrisma.scan.findUnique({
       where: { scanId: originalScanId }
     });
@@ -177,10 +192,8 @@ async function createNewVersion(originalScanId, scanData) {
       throw new Error('Original scan not found');
     }
 
-    // 2. Determine the root parent ID
     const parentScanId = currentScan.parentScanId || currentScan.scanId;
 
-    // 3. Get the latest version number for this parent chain
     const latestVersion = await clinicalPrisma.scan.findFirst({
       where: {
         OR: [
@@ -193,7 +206,6 @@ async function createNewVersion(originalScanId, scanData) {
 
     const newVersionNumber = (latestVersion?.version || 0) + 1;
 
-    // 4. Mark all existing versions as not latest
     await clinicalPrisma.scan.updateMany({
       where: {
         OR: [
@@ -206,7 +218,6 @@ async function createNewVersion(originalScanId, scanData) {
       }
     });
 
-    // 5. Create new version
     const { scanType, fileName, filePath, thumbnailPath, fileSize, mimeType, metadata } = scanData;
 
     const newScan = await clinicalPrisma.scan.create({
@@ -234,12 +245,8 @@ async function createNewVersion(originalScanId, scanData) {
   }
 }
 
-/**
- * Get all versions of a scan (including the original)
- */
 async function getScanHistory(scanId) {
   try {
-    // First find the scan
     const originalScan = await clinicalPrisma.scan.findUnique({
       where: { scanId: scanId }
     });
@@ -248,10 +255,8 @@ async function getScanHistory(scanId) {
       return null;
     }
 
-    // Determine the root parent ID
     const rootId = originalScan.parentScanId || originalScan.scanId;
 
-    // Get all versions
     const versions = await clinicalPrisma.scan.findMany({
       where: {
         OR: [
@@ -277,9 +282,6 @@ async function getScanHistory(scanId) {
   }
 }
 
-/**
- * Get the latest version of a scan
- */
 async function getLatestVersion(scanId) {
   try {
     const originalScan = await clinicalPrisma.scan.findUnique({
@@ -311,9 +313,6 @@ async function getLatestVersion(scanId) {
   }
 }
 
-/**
- * Get all scans for a patient (only latest versions)
- */
 async function getScansByLinkToken(linkToken) {
   try {
     const scans = await clinicalPrisma.scan.findMany({
@@ -333,9 +332,6 @@ async function getScansByLinkToken(linkToken) {
   }
 }
 
-/**
- * Get a specific version by version number
- */
 async function getScanByVersion(rootId, version) {
   try {
     const scan = await clinicalPrisma.scan.findFirst({
@@ -390,7 +386,7 @@ async function updatePatientProfile(linkToken, profileData) {
     });
     return result.profileId;
   } catch (err) {
-    if (err.code === 'P2025') return undefined; // record not found
+    if (err.code === 'P2025') return undefined;
     throw err;
   }
 }
@@ -400,7 +396,7 @@ async function deletePatientProfile(linkToken) {
     await clinicalPrisma.patientProfile.delete({ where: { linkToken } });
     return true;
   } catch (err) {
-    if (err.code === 'P2025') return false; // record not found
+    if (err.code === 'P2025') return false;
     throw err;
   }
 }
@@ -438,14 +434,11 @@ async function updateDoctor(doctorToken, doctorData) {
     });
     return result.doctorId;
   } catch (err) {
-    if (err.code === 'P2025') return undefined; // record not found
+    if (err.code === 'P2025') return undefined;
     throw err;
   }
 }
 
-// 🔥 ADDED: doctors.is_approved existed in the schema/migration but no
-// function ever set it — an admin had no way to approve a doctor
-// through the API. This closes that gap without touching anything else.
 async function approveDoctor(doctorToken) {
   try {
     const result = await clinicalPrisma.doctor.update({
@@ -454,7 +447,7 @@ async function approveDoctor(doctorToken) {
     });
     return result.doctorId;
   } catch (err) {
-    if (err.code === 'P2025') return undefined; // record not found
+    if (err.code === 'P2025') return undefined;
     throw err;
   }
 }
@@ -496,9 +489,6 @@ async function getConsentHistory(linkToken) {
 // 🆕 BE-4: PRINT FUNCTIONS
 // ============================================================
 
-/**
- * Update scan with printed PDF path
- */
 async function updateScanPrintInfo(scanId, pdfPath) {
   try {
     const result = await clinicalPrisma.scan.update({
@@ -515,9 +505,6 @@ async function updateScanPrintInfo(scanId, pdfPath) {
   }
 }
 
-/**
- * Create a print job log
- */
 async function createPrintJob(scanId, pdfPath) {
   try {
     const result = await clinicalPrisma.printJob.create({
@@ -533,9 +520,6 @@ async function createPrintJob(scanId, pdfPath) {
   }
 }
 
-/**
- * Get print jobs for a scan
- */
 async function getPrintJobsByScanId(scanId) {
   try {
     const printJobs = await clinicalPrisma.printJob.findMany({
@@ -565,15 +549,16 @@ module.exports = {
   updateScanStatus,
   deleteScan,
   logAudit,
+  searchScansByText,  // 🔥 ADDED - Search function
 
-  // 🆕 BE-4 - Versioning
+  // BE-4 - Versioning
   createNewVersion,
   getScanHistory,
   getLatestVersion,
   getScansByLinkToken,
   getScanByVersion,
 
-  // 🆕 BE-4 - Print
+  // BE-4 - Print
   updateScanPrintInfo,
   createPrintJob,
   getPrintJobsByScanId,

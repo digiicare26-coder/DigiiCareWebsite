@@ -1,18 +1,35 @@
 // src/routes/authRoute.js
 const express = require('express');
 const router = express.Router();
-const { signup, requestOtp, verifyOtp } = require('../controllers/authController');
+
+// Controllers
+const authController = require('../controllers/authController');
 const { logoutPatient } = require('../controllers/logoutController');
+
+// Auth middleware — default export (a function), NOT { authenticateToken }
 const authMiddleware = require('../middleware/auth');
 
-// No authMiddleware here on purpose — you can't have a token yet,
-// that's the whole point of these routes.
-router.post('/signup', signup);
-router.post('/request-otp', requestOtp);
-router.post('/verify-otp', verifyOtp);
+// ============================================
+// PUBLIC ROUTES (no token needed yet)
+// ============================================
 
-// Logout DOES need a token — it blacklists the exact one you're
-// currently holding.
+// POST /api/auth/signup
+// body: { fullName, email, cnic, mobileNumber, password }
+router.post('/signup', authController.signup);
+
+// POST /api/auth/request-otp
+// body: { identifier, password }   -- step 1 of login: checks password, emails an OTP
+router.post('/request-otp', authController.requestOtp);
+
+// POST /api/auth/verify-otp
+// body: { identifier, otp }        -- step 2 of login: verifies OTP, issues the JWT
+router.post('/verify-otp', authController.verifyOtp);
+
+// ============================================
+// PROTECTED ROUTES (need a valid JWT)
+// ============================================
+
+// POST /api/auth/logout
 router.post('/logout', authMiddleware, logoutPatient);
 
 module.exports = router;

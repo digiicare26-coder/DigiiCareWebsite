@@ -1,185 +1,189 @@
-// ============================================
-// BE-4: Print Controller - Auto-save + Print-Ready PDF
-// ============================================
-
-const pdfService = require('../services/pdfService');
+// src/controllers/printController.js
 const { clinicalPrisma } = require('../../db');
+const PDFDocument = require('pdfkit');
 const fs = require('fs');
+const path = require('path');
 
-/**
- * Generate a print-ready PDF for a scan
- * POST /api/print/:scanId/generate
- */
-const generatePrintPDF = async (req, res) => {
+// ============================================
+// GENERATE PRINT PDF
+// ============================================
+async function generatePrintPDF(req, res) {
     try {
         const { scanId } = req.params;
+        const { linkToken } = req.user;
 
-        // 1. Validate scan exists and user has access
-        const scan = await clinicalPrisma.scan.findUnique({
-            where: { scanId: scanId }
+        // Check if scan exists
+        const scan = await clinicalPrisma.scan.findFirst({
+            where: {
+                scanId: scanId,
+                linkToken: linkToken,
+                status: { not: 'DELETED' }
+            }
         });
 
         if (!scan) {
             return res.status(404).json({
                 success: false,
-                error: 'Scan not found'
+                error: 'Scan not found or access denied'
             });
         }
 
-        // 2. Check if user has access (linkToken validation)
-        const userLinkToken = req.user?.linkToken;
-        if (userLinkToken && scan.linkToken !== userLinkToken) {
-            return res.status(403).json({
-                success: false,
-                error: 'You do not have access to this scan'
-            });
+        // Create PDF
+        const doc = new PDFDocument();
+        const pdfPath = path.join(__dirname, '../../uploads/prints', `${scanId}.pdf`);
+        
+        // Ensure directory exists
+        const dir = path.dirname(pdfPath);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
         }
 
-        // 3. Get images for the scan
-        const imagePaths = await getImagePathsForScan(scanId);
+        // Write PDF to file
+        const writeStream = fs.createWriteStream(pdfPath);
+        doc.pipe(writeStream);
 
-        if (imagePaths.length === 0) {
-            return res.status(404).json({
-                success: false,
-                error: 'No images found for this scan'
-            });
+        // Add content to PDF
+        doc.fontSize(20).text('Medical Report', { align: 'center' });
+        doc.moveDown();
+        doc.fontSize(14).text(`Scan ID: ${scan.scanId}`);
+        doc.text(`File Name: ${scan.fileName}`);
+        doc.text(`Scan Type: ${scan.scanType}`);
+        doc.text(`Uploaded At: ${scan.uploadedAt}`);
+        
+        if (scan.ocrText) {
+            doc.moveDown();
+            doc.fontSize(16).text('OCR Text:');
+            doc.fontSize(12).text(scan.ocrText);
         }
+        
+        doc.end();
 
-        // 4. Generate PDF
-        const result = await pdfService.generatePrintPDF(scanId, imagePaths);
-
-        // 5. Get updated scan with print info
-        const updatedScan = await clinicalPrisma.scan.findUnique({
-            where: { scanId: scanId }
+        // Wait for PDF to finish writing
+        await new Promise((resolve, reject) => {
+            writeStream.on('finish', resolve);
+            writeStream.on('error', reject);
         });
 
-        res.status(200).json({
-            success: true,
-            message: 'Print-ready PDF generated successfully',
+        // Update scan with PDF path
+        await clinicalPrisma.scan.update({
+            where: { scanId: scanId },
             data: {
-                scanId: scanId,
-                pdfPath: result.pdfPath,
-                printedAt: updatedScan?.printedAt,
-                pdfUrl: `/api/print/${scanId}/download`
+                printedPdfPath: pdfPath,
+                printedAt: new Date()
             }
         });
 
-    } catch (error) {
-        console.error('Generate PDF Error:', error);
-        res.status(500).json({
+        return res.status(200).json({
+            success: true,
+            data: {
+                scanId: scanId,
+                message: 'PDF generated successfully',
+                downloadUrl: `/api/print/${scanId}/download`
+            }
+        });
+
+    } catch (err) {
+        console.error('Generate PDF error:', err);
+        return res.status(500).json({
             success: false,
-            error: 'Failed to generate PDF',
-            details: process.env.NODE_ENV === 'development' ? error.message : undefined
+            error: err.message || 'Failed to generate PDF'
         });
     }
-};
+}
 
-/**
- * Download the generated PDF
- * GET /api/print/:scanId/download
- */
-const downloadPDF = async (req, res) => {
+// ============================================
+// DOWNLOAD PDF
+// ============================================
+async function downloadPDF(req, res) {
     try {
         const { scanId } = req.params;
+        const { linkToken } = req.user;
 
-        // 1. Get PDF path
-        const pdfPath = await pdfService.getPDFPath(scanId);
+        const scan = await clinicalPrisma.scan.findFirst({
+            where: {
+                scanId: scanId,
+                linkToken: linkToken,
+                status: { not: 'DELETED' }
+            }
+        });
 
-        if (!pdfPath) {
+        if (!scan) {
             return res.status(404).json({
                 success: false,
-                error: 'PDF not found. Please generate it first.'
+                error: 'Scan not found or access denied'
             });
         }
 
-        // 2. Check if file exists
-        if (!fs.existsSync(pdfPath)) {
+        if (!scan.printedPdfPath) {
+            return res.status(404).json({
+                success: false,
+                error: 'PDF not generated yet. Please generate first.'
+            });
+        }
+
+        // Check if file exists
+        if (!fs.existsSync(scan.printedPdfPath)) {
             return res.status(404).json({
                 success: false,
                 error: 'PDF file not found on server'
             });
         }
 
-        // 3. Get scan info for filename
-        const scan = await clinicalPrisma.scan.findUnique({
-            where: { scanId: scanId }
+        // Send file for download
+        res.download(scan.printedPdfPath, `${scan.fileName}.pdf`);
+
+    } catch (err) {
+        console.error('Download PDF error:', err);
+        return res.status(500).json({
+            success: false,
+            error: err.message || 'Failed to download PDF'
         });
+    }
+}
 
-        const fileName = scan ? `scan_${scan.scanId}.pdf` : 'document.pdf';
+// ============================================
+// GET PRINT HISTORY
+// ============================================
+async function getPrintHistory(req, res) {
+    try {
+        const { scanId } = req.params;
+        const { linkToken } = req.user;
 
-        // 4. Send file
-        res.download(pdfPath, fileName, (err) => {
-            if (err) {
-                console.error('Download Error:', err);
-                if (!res.headersSent) {
-                    res.status(500).json({
-                        success: false,
-                        error: 'Failed to download PDF'
-                    });
-                }
+        const scan = await clinicalPrisma.scan.findFirst({
+            where: {
+                scanId: scanId,
+                linkToken: linkToken
             }
         });
 
-    } catch (error) {
-        console.error('Download PDF Error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to download PDF'
-        });
-    }
-};
-
-/**
- * Get print history for a scan
- * GET /api/print/:scanId/history
- */
-const getPrintHistory = async (req, res) => {
-    try {
-        const { scanId } = req.params;
-
-        const history = await pdfService.getPrintHistory(scanId);
-
-        res.status(200).json({
-            success: true,
-            data: history
-        });
-
-    } catch (error) {
-        console.error('Get Print History Error:', error);
-        res.status(500).json({
-            success: false,
-            error: 'Failed to get print history'
-        });
-    }
-};
-
-/**
- * Get scan images helper function
- */
-const getImagePathsForScan = async (scanId) => {
-    try {
-        const scan = await clinicalPrisma.scan.findUnique({
-            where: { scanId: scanId }
-        });
-
-        if (scan && scan.filePath) {
-            return [scan.filePath];
+        if (!scan) {
+            return res.status(404).json({
+                success: false,
+                error: 'Scan not found or access denied'
+            });
         }
 
-        return [];
+        return res.status(200).json({
+            success: true,
+            data: {
+                scanId: scanId,
+                printedPdfPath: scan.printedPdfPath,
+                printedAt: scan.printedAt,
+                message: 'Print history retrieved'
+            }
+        });
 
-    } catch (error) {
-        console.error('Get Images Error:', error);
-        return [];
+    } catch (err) {
+        console.error('Print history error:', err);
+        return res.status(500).json({
+            success: false,
+            error: err.message || 'Failed to fetch print history'
+        });
     }
-};
+}
 
-// ============================================
-// MODULE EXPORTS - ✅ INDUSTRY STANDARD
-// ============================================
 module.exports = {
     generatePrintPDF,
     downloadPDF,
-    getPrintHistory,
-    getImagePathsForScan
+    getPrintHistory
 };
