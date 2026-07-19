@@ -243,6 +243,107 @@ async function findDoctorByIdentifier(identifier) {
   });
 }
 
+// ============================================================
+// 🆕 ADMIN PANEL FUNCTIONS
+// ============================================================
+
+/**
+ * True only before the very first admin is created. Used to gate
+ * the one-time bootstrap endpoint — once one admin exists, that
+ * endpoint refuses and every further admin must go through the
+ * protected create-admin endpoint instead.
+ */
+async function countAdmins() {
+  return identityPrisma.admin.count();
+}
+
+/**
+ * Creates an admin row. createdByAdminId is null for the bootstrap
+ * admin, and set to the acting admin's id for every admin created
+ * afterwards through the protected endpoint.
+ */
+async function createAdmin(fullName, email, passwordHash, createdByAdminId = null) {
+  try {
+    return await identityPrisma.admin.create({
+      data: {
+        fullName,
+        email,
+        passwordHash,
+        createdByAdminId,
+      },
+    });
+  } catch (err) {
+    if (err.code === 'P2002') {
+      throw new Error('An admin with this email already exists.');
+    }
+    throw err;
+  }
+}
+
+async function findAdminByEmail(email) {
+  return identityPrisma.admin.findUnique({ where: { email } });
+}
+
+async function findAdminById(adminId) {
+  return identityPrisma.admin.findUnique({ where: { adminId } });
+}
+
+/**
+ * Every independent doctor account, with its doctorToken — the
+ * admin panel's doctor list is built from this, then enriched with
+ * each doctor's clinical profile (specialization/isApproved) and
+ * documents from clinical_schema separately.
+ */
+async function getAllDoctors() {
+  return identityPrisma.doctor.findMany({
+    include: { doctorToken: true },
+    orderBy: { doctorId: 'asc' },
+  });
+}
+
+async function findDoctorById(doctorId) {
+  return identityPrisma.doctor.findUnique({
+    where: { doctorId },
+    include: { doctorToken: true },
+  });
+}
+
+/**
+ * Look up a doctor's identity row by their doctorToken (the clinical
+ * side identifier) — used by the admin panel, which only ever has
+ * doctorToken in the URL (e.g. GET /api/admin/doctors/:doctorToken).
+ */
+async function findDoctorByToken(doctorToken) {
+  return identityPrisma.doctor.findFirst({
+    where: { doctorToken: { doctorToken } },
+    include: { doctorToken: true },
+  });
+}
+
+/**
+ * Every independent patient account (parentPatientId: null) with its
+ * linkToken — family/linked sub-accounts are intentionally excluded
+ * from the top-level admin list, same as findPatientByIdentifier.
+ * Admins only ever see identity fields here (name/email/cnic/mobile/
+ * uid) — never clinical data (vitals/scans/consultations), which
+ * lives in a completely separate database (clinical_schema) that
+ * this query never touches.
+ */
+async function getAllPatients() {
+  return identityPrisma.patient.findMany({
+    where: { parentPatientId: null },
+    include: { linkToken: true, children: true },
+    orderBy: { patientId: 'asc' },
+  });
+}
+
+async function findPatientById(patientId) {
+  return identityPrisma.patient.findUnique({
+    where: { patientId },
+    include: { linkToken: true, children: true },
+  });
+}
+
 module.exports = {
   createPatient,
   createPatientForSignup,
@@ -252,4 +353,15 @@ module.exports = {
   findPatientByIdentifier,
   createDoctorForSignup,
   findDoctorByIdentifier,
+
+  // 🆕 Admin panel
+  countAdmins,
+  createAdmin,
+  findAdminByEmail,
+  findAdminById,
+  getAllDoctors,
+  findDoctorById,
+  findDoctorByToken,
+  getAllPatients,
+  findPatientById,
 };

@@ -22,6 +22,7 @@ const searchRoute = require('./src/routes/searchRoute');             // BE-4
 const consentRoute = require('./src/routes/consentRoute');           // BE-2
 const printRoutes = require('./src/routes/printRoute');              // BE-4
 const rewardsRoute = require('./src/routes/rewardsRoute');           // BE-2 Rewards
+const adminRoute = require('./src/routes/adminRoute');               // 🆕 Admin Panel
 
 // ============================================
 // MIDDLEWARE IMPORTS
@@ -86,6 +87,9 @@ app.use('/api/family', subAccountRoute);
 // --- Rewards System (BE-2) ---
 app.use('/api/rewards', rewardsRoute);
 
+// --- 🆕 Admin Panel ---
+app.use('/api/admin', adminRoute);
+
 // ============================================
 // 🆕 DEBUG: LIST ALL ACTUAL REGISTERED ROUTES
 // ============================================
@@ -103,6 +107,7 @@ app.get('/api/routes', (req, res) => {
         ['/api/search', searchRoute],
         ['/api/family', subAccountRoute],
         ['/api/rewards', rewardsRoute],
+        ['/api/admin', adminRoute],
     ];
 
     const routes = [];
