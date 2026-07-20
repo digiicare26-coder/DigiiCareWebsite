@@ -29,4 +29,16 @@ async function logoutDoctor(req, res) {
   }
 }
 
-module.exports = { logoutPatient, logoutDoctor };
+/**
+ * 🆕 POST /api/admin/logout   (protected by src/middleware/adminAuth.js)
+ */
+async function logoutAdmin(req, res) {
+  try {
+    await revokeToken(req.token);
+    return res.status(200).json({ success: true, message: 'Logged out successfully.' });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+}
+
+module.exports = { logoutPatient, logoutDoctor, logoutAdmin };

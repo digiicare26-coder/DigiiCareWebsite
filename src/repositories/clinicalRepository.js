@@ -452,6 +452,69 @@ async function approveDoctor(doctorToken) {
   }
 }
 
+// ============================================================
+// 🆕 ADMIN PANEL: DOCTOR DOCUMENT VERIFICATION FUNCTIONS
+// ============================================================
+
+async function createDoctorDocument(doctorToken, documentData) {
+  const { docType, fileName, filePath, fileSize, mimeType } = documentData;
+  const result = await clinicalPrisma.doctorDocument.create({
+    data: {
+      doctorToken,
+      docType,
+      fileName,
+      filePath,
+      fileSize: fileSize || null,
+      mimeType: mimeType || null,
+      status: 'PENDING',
+    },
+  });
+  return result;
+}
+
+async function getDocumentsByDoctorToken(doctorToken) {
+  return clinicalPrisma.doctorDocument.findMany({
+    where: { doctorToken },
+    orderBy: { uploadedAt: 'desc' },
+  });
+}
+
+async function getDoctorDocumentById(documentId) {
+  return clinicalPrisma.doctorDocument.findUnique({ where: { documentId } });
+}
+
+/**
+ * Admin marks a single document VERIFIED or REJECTED after
+ * reviewing it. rejectionReason only makes sense for REJECTED, but
+ * is stored as given either way (null when not provided).
+ */
+async function reviewDoctorDocument(documentId, status, rejectionReason = null) {
+  try {
+    return await clinicalPrisma.doctorDocument.update({
+      where: { documentId },
+      data: {
+        status,
+        rejectionReason: rejectionReason || null,
+        reviewedAt: new Date(),
+      },
+    });
+  } catch (err) {
+    if (err.code === 'P2025') return undefined;
+    throw err;
+  }
+}
+
+/**
+ * A doctor can only be approved once at least one of their uploaded
+ * documents has been reviewed and marked VERIFIED by an admin.
+ */
+async function hasVerifiedDocument(doctorToken) {
+  const count = await clinicalPrisma.doctorDocument.count({
+    where: { doctorToken, status: 'VERIFIED' },
+  });
+  return count > 0;
+}
+
 async function getConsultationsByDoctorToken(doctorToken) {
   return clinicalPrisma.consultation.findMany({
     where: { doctorToken },
@@ -712,6 +775,14 @@ module.exports = {
   getDoctorByToken,
   updateDoctor,
   approveDoctor,
+
+  // 🆕 Admin panel - doctor document verification
+  createDoctorDocument,
+  getDocumentsByDoctorToken,
+  getDoctorDocumentById,
+  reviewDoctorDocument,
+  hasVerifiedDocument,
+
   getConsultationsByDoctorToken,
   createConsultation,
   createConsentLog,

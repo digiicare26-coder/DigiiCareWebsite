@@ -144,6 +144,27 @@ model DoctorLinkToken {
 }
 
 // ============================================================
+// 🆕 ADMIN MODEL (Identity)
+// ============================================================
+// - Exactly one admin exists at first (created via the one-time
+//   bootstrap endpoint, only usable while zero admins exist).
+// - That admin (and any admin after it) can create further admins
+//   via the protected "create admin" endpoint — never public signup.
+// - createdByAdminId is null only for the very first (bootstrap) admin.
+// ============================================================
+model Admin {
+  adminId         Int      @id @default(autoincrement()) @map("admin_id")
+  fullName        String   @map("full_name")
+  email           String   @unique
+  passwordHash    String   @map("password_hash")
+  createdByAdminId Int?    @map("created_by_admin_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@map("admins")
+  @@schema("identity_schema")
+}
+
+// ============================================================
 // REVOKED TOKEN MODEL (JWT Blacklist)
 // ============================================================
 // Both patient and doctor JWTs go here for logout
