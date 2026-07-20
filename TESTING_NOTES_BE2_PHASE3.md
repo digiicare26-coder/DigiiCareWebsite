@@ -23,9 +23,9 @@ End-to-end integration test covering Consent, Patient Profile, Doctor Portal, Co
 34/35 checks passed.
 
 ## Issue Found (Not BE-2's Code)
-`GET /api/search/scans` returns 500 — `searchController.js` (BE-4) calls
+`GET /api/search/scans?q=<text>` returns 500 (for valid `q` >= 2 chars) — `src/controllers/searchController.js` (BE-4) calls
 `clinicalRepo.searchScansByText`, which is not implemented in
-`clinicalRepository.js`. Reported to BE-4 directly.
+`src/repositories/clinicalRepository.js`. Reported to BE-4 directly.
 
 ## Test Data
 All test accounts/records created during this pass have been cleaned up
