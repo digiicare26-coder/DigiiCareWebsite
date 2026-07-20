@@ -4,6 +4,7 @@ const { createPatientForSignup, findPatientByIdentifier } = require('../reposito
 const otpService = require('../services/otpService');
 const emailService = require('../services/emailService');
 const passwordService = require('../services/passwordService');
+const notificationService = require('../services/notificationService'); // 🆕 Notifications
 
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 const OTP_EXPIRY_MINUTES = parseInt(process.env.OTP_EXPIRY_MINUTES || '5', 10);
@@ -148,6 +149,9 @@ async function verifyOtp(req, res) {
       process.env.JWT_SECRET,
       { expiresIn: JWT_EXPIRES_IN }
     );
+
+    // 🆕 Notify patient: OTP verified successfully
+    notificationService.notifyPatientOtpVerified(patient.patientId);
 
     return res.status(200).json({
       success: true,

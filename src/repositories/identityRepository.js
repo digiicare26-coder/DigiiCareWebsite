@@ -344,6 +344,19 @@ async function findPatientById(patientId) {
   });
 }
 
+/**
+ * 🆕 Notifications: look up a patient's identity row by their
+ * linkToken (the clinical side identifier) — used to resolve a
+ * patientId when a controller only has linkToken on hand (uploads,
+ * consultations, rewards, etc.), same idea as findDoctorByToken.
+ */
+async function findPatientByLinkToken(linkToken) {
+  return identityPrisma.patient.findFirst({
+    where: { linkToken: { linkToken } },
+    include: { linkToken: true },
+  });
+}
+
 module.exports = {
   createPatient,
   createPatientForSignup,
@@ -364,4 +377,5 @@ module.exports = {
   findDoctorByToken,
   getAllPatients,
   findPatientById,
+  findPatientByLinkToken,
 };

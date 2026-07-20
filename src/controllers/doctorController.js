@@ -1,5 +1,7 @@
 // src/controllers/doctorController.js
 const clinicalRepository = require('../repositories/clinicalRepository');
+const identityRepository = require('../repositories/identityRepository'); // 🆕 Notifications
+const notificationService = require('../services/notificationService');   // 🆕 Notifications
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs-extra');
@@ -144,6 +146,13 @@ async function approveDoctor(req, res) {
       return res.status(404).json({ success: false, error: 'Doctor not found.' });
     }
     const doctor = await clinicalRepository.getDoctorByToken(doctorToken);
+
+    // 🆕 Notify doctor: profile approved
+    const doctorIdentity = await identityRepository.findDoctorByToken(doctorToken);
+    if (doctorIdentity) {
+      notificationService.notifyDoctorApproved(doctorIdentity.doctorId);
+    }
+
     res.status(200).json({ success: true, data: doctor, message: 'Doctor approved successfully.' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
