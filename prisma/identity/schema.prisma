@@ -144,6 +144,55 @@ model DoctorLinkToken {
 }
 
 // ============================================================
+// 🆕 ADMIN MODEL (Identity)
+// ============================================================
+// - Exactly one admin exists at first (created via the one-time
+//   bootstrap endpoint, only usable while zero admins exist).
+// - That admin (and any admin after it) can create further admins
+//   via the protected "create admin" endpoint — never public signup.
+// - createdByAdminId is null only for the very first (bootstrap) admin.
+// ============================================================
+model Admin {
+  adminId         Int      @id @default(autoincrement()) @map("admin_id")
+  fullName        String   @map("full_name")
+  email           String   @unique
+  passwordHash    String   @map("password_hash")
+  createdByAdminId Int?    @map("created_by_admin_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@map("admins")
+  @@schema("identity_schema")
+}
+
+// ============================================================
+// 🆕 NOTIFICATION MODEL (Identity)
+// ============================================================
+// Generic in-app notification for BOTH patients and doctors.
+// recipientType tells us which table recipientId points at:
+//   - "PATIENT" -> patients.patient_id
+//   - "DOCTOR"  -> doctors.doctor_id
+// Kept generic (instead of two separate tables) so every existing
+// action (OTP verified, document verified/rejected, doctor approved,
+// consultation booked, family member linked, redemption reviewed,
+// report/prescription uploaded, etc.) can create one the same way.
+// ============================================================
+model Notification {
+  notificationId Int      @id @default(autoincrement()) @map("notification_id")
+  recipientType  String   @map("recipient_type") // "PATIENT" | "DOCTOR"
+  recipientId    Int      @map("recipient_id")
+  type           String   // e.g. "OTP_VERIFIED", "DOCTOR_APPROVED", "DOCUMENT_VERIFIED"...
+  title          String
+  message        String
+  data           Json?
+  isRead         Boolean  @default(false) @map("is_read")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([recipientType, recipientId, isRead])
+  @@map("notifications")
+  @@schema("identity_schema")
+}
+
+// ============================================================
 // REVOKED TOKEN MODEL (JWT Blacklist)
 // ============================================================
 // Both patient and doctor JWTs go here for logout

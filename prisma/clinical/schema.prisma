@@ -180,6 +180,32 @@ model Doctor {
 }
 
 // ============================================================
+// 🆕 DOCTOR DOCUMENT MODEL (Verification Documents)
+// ============================================================
+// A doctor uploads verification documents (license, degree, CNIC,
+// etc.) here. An admin reviews each one (VERIFIED / REJECTED)
+// before the doctor's clinical profile (Doctor.isApproved) can be
+// approved. doctorToken references identity_schema.doctor_link_tokens.
+// ============================================================
+model DoctorDocument {
+  documentId      String    @id @default(uuid()) @map("document_id") @db.Uuid
+  doctorToken     String    @map("doctor_token")
+  docType         String    @map("doc_type") // e.g. LICENSE, DEGREE, CNIC
+  fileName        String    @map("file_name")
+  filePath        String    @map("file_path")
+  fileSize        Int?      @map("file_size")
+  mimeType        String?   @map("mime_type")
+  status          String    @default("PENDING") // PENDING, VERIFIED, REJECTED
+  rejectionReason String?   @map("rejection_reason")
+  reviewedAt      DateTime? @map("reviewed_at")
+  uploadedAt      DateTime  @default(now()) @map("uploaded_at")
+
+  @@index([doctorToken])
+  @@map("doctor_documents")
+  @@schema("clinical_schema")
+}
+
+// ============================================================
 // MEDICINE MODEL (Reference Catalog)
 // ============================================================
 // Shared reference data — not linked to any patient

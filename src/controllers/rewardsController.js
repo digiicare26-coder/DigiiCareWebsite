@@ -1,5 +1,7 @@
 // src/controllers/rewardsController.js
 const clinicalRepository = require('../repositories/clinicalRepository');
+const identityRepository = require('../repositories/identityRepository'); // 🆕 Notifications
+const notificationService = require('../services/notificationService');   // 🆕 Notifications
 
 async function getBalance(req, res) {
   try {
@@ -85,6 +87,13 @@ async function createRedemptionRequest(req, res) {
     }
 
     const request = await clinicalRepository.createRedemptionRequest(linkToken, points, reason);
+
+    // 🆕 Notify patient: redemption request submitted
+    const patient = await identityRepository.findPatientByLinkToken(linkToken);
+    if (patient) {
+      notificationService.notifyRedemptionRequested(patient.patientId, points);
+    }
+
     return res.status(201).json({ success: true, data: request });
   } catch (err) {
     if (err.message === 'INSUFFICIENT_BALANCE') {
@@ -117,6 +126,15 @@ async function approveRedemptionRequest(req, res) {
       return res.status(404).json({ success: false, error: 'Request not found or already reviewed.' });
     }
     const request = await clinicalRepository.getRedemptionRequestById(redemptionId);
+
+    // 🆕 Notify patient: redemption request approved
+    if (request) {
+      const patient = await identityRepository.findPatientByLinkToken(request.linkToken);
+      if (patient) {
+        notificationService.notifyRedemptionApproved(patient.patientId, request.pointsRequested);
+      }
+    }
+
     return res.status(200).json({ success: true, data: request });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -131,6 +149,13 @@ async function rejectRedemptionRequest(req, res) {
     if (!request) {
       return res.status(404).json({ success: false, error: 'Request not found or already reviewed.' });
     }
+
+    // 🆕 Notify patient: redemption request rejected (points refunded)
+    const patient = await identityRepository.findPatientByLinkToken(request.linkToken);
+    if (patient) {
+      notificationService.notifyRedemptionRejected(patient.patientId, request.pointsRequested);
+    }
+
     return res.status(200).json({ success: true, data: request, message: 'Request rejected and points refunded.' });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });

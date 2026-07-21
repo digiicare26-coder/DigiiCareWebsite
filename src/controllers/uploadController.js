@@ -10,6 +10,8 @@ const fs = require('fs');
 
 // Import repositories for versioning
 const clinicalRepository = require('../repositories/clinicalRepository');
+const identityRepository = require('../repositories/identityRepository'); // 🆕 Notifications
+const notificationService = require('../services/notificationService');   // 🆕 Notifications
 const pdfService = require('../services/pdfService');
 
 // ============================================================
@@ -126,6 +128,12 @@ async function uploadPrescription(req, res) {
       message: 'Prescription uploaded successfully'
     });
 
+    // 🆕 Notify patient: prescription uploaded & processed
+    const patientForPrescription = await identityRepository.findPatientByLinkToken(linkToken);
+    if (patientForPrescription) {
+      notificationService.notifyScanUploaded(patientForPrescription.patientId, 'prescription');
+    }
+
   } catch (error) {
     console.error('Upload Prescription Error:', error);
     res.status(500).json({
@@ -223,6 +231,12 @@ async function uploadReport(req, res) {
       },
       message: 'Report uploaded successfully'
     });
+
+    // 🆕 Notify patient: report uploaded & processed
+    const patientForReport = await identityRepository.findPatientByLinkToken(linkToken);
+    if (patientForReport) {
+      notificationService.notifyScanUploaded(patientForReport.patientId, 'report');
+    }
 
   } catch (error) {
     console.error('Upload Report Error:', error);

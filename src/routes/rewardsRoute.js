@@ -12,19 +12,23 @@ const {
   rejectRedemptionRequest,
 } = require('../controllers/rewardsController');
 const authMiddleware = require('../middleware/auth');
+const adminAuthMiddleware = require('../middleware/adminAuth');
 const deidentifyMiddleware = require('../middleware/deidentify');
 
-router.use(authMiddleware);
-router.use(deidentifyMiddleware);
+// Patient-facing routes — patient's own token only.
+router.get('/balance', authMiddleware, deidentifyMiddleware, getBalance);
+router.get('/history', authMiddleware, deidentifyMiddleware, getHistory);
+router.post('/test-earn', authMiddleware, deidentifyMiddleware, testEarnPoints);
+router.post('/redeem', authMiddleware, deidentifyMiddleware, redeem);
+router.post('/redemption-requests', authMiddleware, deidentifyMiddleware, createRedemptionRequest);
+router.get('/redemption-requests', authMiddleware, deidentifyMiddleware, getMyRedemptionRequests);
 
-router.get('/balance', getBalance);
-router.get('/history', getHistory);
-router.post('/test-earn', testEarnPoints);
-router.post('/redeem', redeem);
-
-router.post('/redemption-requests', createRedemptionRequest);
-router.get('/redemption-requests', getMyRedemptionRequests);
-router.patch('/redemption-requests/:redemptionId/approve', approveRedemptionRequest);
-router.patch('/redemption-requests/:redemptionId/reject', rejectRedemptionRequest);
+// Admin-only routes — now that the admin panel exists (see
+// adminRoute.js), these require a real admin JWT instead of being
+// reachable by any logged-in patient. Previously this file had a
+// blanket router.use(authMiddleware) that covered these too, which
+// meant any patient could approve/reject any redemption request.
+router.patch('/redemption-requests/:redemptionId/approve', adminAuthMiddleware, approveRedemptionRequest);
+router.patch('/redemption-requests/:redemptionId/reject', adminAuthMiddleware, rejectRedemptionRequest);
 
 module.exports = router;
