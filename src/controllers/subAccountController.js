@@ -3,6 +3,7 @@ const {
   createSubAccount,
   findSubAccountsByParent,
 } = require('../repositories/identityRepository');
+const notificationService = require('../services/notificationService'); // 🆕 Notifications
 
 const VALID_RELATIONS = ['child', 'spouse'];
 
@@ -33,6 +34,9 @@ async function addFamilyMember(req, res) {
     }
 
     const { subAccountId, uid, linkToken } = await createSubAccount(patientId, fullName.trim(), relation);
+
+    // 🆕 Notify the parent patient: family member linked
+    notificationService.notifyFamilyMemberAdded(patientId, fullName.trim(), relation);
 
     return res.status(201).json({
       success: true,

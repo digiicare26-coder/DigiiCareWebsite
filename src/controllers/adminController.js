@@ -4,6 +4,7 @@
 // (src/middleware/adminAuth.js on every route in adminRoute.js).
 const identityRepository = require('../repositories/identityRepository');
 const clinicalRepository = require('../repositories/clinicalRepository');
+const notificationService = require('../services/notificationService'); // 🆕 Notifications
 
 // ============================================================
 // DOCTORS: list, detail, document review, approval
@@ -129,6 +130,17 @@ async function reviewDocument(req, res) {
     }
 
     const updated = await clinicalRepository.reviewDoctorDocument(documentId, status, rejectionReason);
+
+    // 🆕 Notify doctor: document verified/rejected
+    const doctorForDoc = await identityRepository.findDoctorByToken(doctorToken);
+    if (doctorForDoc) {
+      notificationService.notifyDoctorDocumentReviewed(doctorForDoc.doctorId, {
+        docType: existing.docType,
+        status,
+        rejectionReason,
+      });
+    }
+
     res.status(200).json({ success: true, data: updated, message: `Document marked ${status.toLowerCase()}.` });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -164,6 +176,13 @@ async function approveDoctor(req, res) {
       return res.status(404).json({ success: false, error: 'Doctor not found.' });
     }
     const doctor = await clinicalRepository.getDoctorByToken(doctorToken);
+
+    // 🆕 Notify doctor: profile approved
+    const doctorIdentity = await identityRepository.findDoctorByToken(doctorToken);
+    if (doctorIdentity) {
+      notificationService.notifyDoctorApproved(doctorIdentity.doctorId);
+    }
+
     res.status(200).json({ success: true, data: doctor, message: 'Doctor approved successfully.' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
