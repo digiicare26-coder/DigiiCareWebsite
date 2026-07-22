@@ -5,32 +5,22 @@ const {
   registerDoctor,
   getDoctor,
   updateDoctor,
+  approveDoctor,
   getDoctorPatients,
-  // 🆕 Admin panel - doctor uploads own verification documents
-  documentUpload,
-  uploadDocument,
-  getMyDocuments,
 } = require('../controllers/doctorController');
 const doctorAuthMiddleware = require('../middleware/doctorAuth');
+const adminAuthMiddleware = require('../middleware/adminAuth');
 const deidentifyMiddleware = require('../middleware/deidentify');
 
-// ✅ Doctor login ban chuka hai — ab yeh routes bhi protected hain,
-// bilkul Patient Profile jaisa. doctorToken JWT se aata hai.
+// Doctor login ban chuka hai — yeh routes doctor ke apne JWT se protected hain.
 router.post('/', doctorAuthMiddleware, deidentifyMiddleware, registerDoctor);
 router.get('/', doctorAuthMiddleware, deidentifyMiddleware, getDoctor);
 router.put('/', doctorAuthMiddleware, deidentifyMiddleware, updateDoctor);
 router.get('/patients', doctorAuthMiddleware, deidentifyMiddleware, getDoctorPatients);
 
-// 🆕 Doctor uploads their own verification documents (license/degree/
-// CNIC/etc). An admin reviews + approves via /api/admin/doctors/... —
-// see src/routes/adminRoute.js.
-router.post('/documents', doctorAuthMiddleware, documentUpload.single('file'), uploadDocument);
-router.get('/documents', doctorAuthMiddleware, getMyDocuments);
-
-// 🆕 The admin panel this was waiting for now exists — doctor
-// approval moved to PATCH /api/admin/doctors/:doctorToken/approve
-// (src/routes/adminRoute.js), which also enforces that at least one
-// of the doctor's documents has been verified first. Removed from
-// here so there isn't a second, weaker path to the same action.
+// Admin action — admin panel now exists (see adminRoute.js). Fixed
+// same issue as rewardsRoute.js: this was previously reachable by
+// anyone, no auth at all.
+router.patch('/:doctorToken/approve', adminAuthMiddleware, approveDoctor);
 
 module.exports = router;
